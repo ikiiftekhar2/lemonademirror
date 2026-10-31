@@ -1,0 +1,1073 @@
+From e3337d74b076beafc381478ff2296194ba7c274a Mon Sep 17 00:00:00 2001
+From: mirror <mirror@build>
+Date: Sat, 31 Oct 2026 07:53:35 +0000
+Subject: [PATCH 1/6] D3 FIX: ti-sn65dsi83 vendor LVDS output-stage override
+
+Panel on the lululemon Mirror V1.1 only locks with the vendor
+sn65dsi84 register values (decoded from factory dtbo, see
+work/D3_vendor_bridge_table.md). Mainline derivation left the
+LVDS receiver unsynced (panel stuck in RGBW factory aging pattern).
+
+- add DT property ti,lvds-vendor-override (binding + parser)
+- when set, rewrite LVDS-stage regs (0x0b,0x18,0x2c,0x30,0x34,
+  0x36,0x38,0x3a) with vendor values after driver init,
+  before PLL_EN (0x0d stays last, per vendor sequence)
+- set property in imx8mm-mirror.dts
+
+Verified live 2026-10-31: regmap dump matches vendor table
+byte-for-byte, PLL locks, fb0 writes visible on glass.
+dtb v7 2d4c34ac..., ko 727ec4a4...
+---
+ .../bindings/display/bridge/ti,sn65dsi83.yaml |   8 +
+ .../boot/dts/freescale/imx8mm-mirror.dts      | 934 ++++++++++++++++++
+ drivers/gpu/drm/bridge/ti-sn65dsi83.c         |  52 +
+ 3 files changed, 994 insertions(+)
+ create mode 100644 arch/arm64/boot/dts/freescale/imx8mm-mirror.dts
+
+diff --git a/Documentation/devicetree/bindings/display/bridge/ti,sn65dsi83.yaml b/Documentation/devicetree/bindings/display/bridge/ti,sn65dsi83.yaml
+index e69b6343a..080181392 100644
+--- a/Documentation/devicetree/bindings/display/bridge/ti,sn65dsi83.yaml
++++ b/Documentation/devicetree/bindings/display/bridge/ti,sn65dsi83.yaml
+@@ -38,6 +38,14 @@ properties:
+   interrupts:
+     maxItems: 1
+ 
++  ti,lvds-vendor-override:
++    type: boolean
++    description: >
++      Apply the vendor LVDS output-stage register values (decoded from the
++      vendor sn65dsi84 init table) instead of the values derived from the
++      panel timings. Needed on panels whose LVDS receiver only locks with
++      the vendor clock/sync configuration.
++
+   ports:
+     $ref: /schemas/graph.yaml#/properties/ports
+ 
+diff --git a/arch/arm64/boot/dts/freescale/imx8mm-mirror.dts b/arch/arm64/boot/dts/freescale/imx8mm-mirror.dts
+new file mode 100644
+index 000000000..11ac78a07
+--- /dev/null
++++ b/arch/arm64/boot/dts/freescale/imx8mm-mirror.dts
+@@ -0,0 +1,934 @@
++// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
++/*
++ * lululemon Mirror V1.1 (i.MX 8M Mini "Mirror V1.1 EVT rev A0B")
++ *
++ * Ported from OUR unit's stock device tree (work/B2_our_dts/our_dtbo_a.dts,
++ * byte-identical decode of dtbo_a) to MAINLINE bindings — per work/B4_our_dt_map.md.
++ * All GPIO numbers below are HARDWARE bank names (B4 header note):
++ *   gpio@30200000=GPIO1 .. gpio@30240000=GPIO5.
++ *
++ * Provenance tags:
++ *   [B4]        = value from our own decoded DT (source of truth)
++ *   BORROWED    = standard/mainline value B4 lacks — VERIFY AT FIRST BOOT
++ *
++ * Deliberately NOT ported (mainline driver computes them or binding lacks them):
++ *   - SN65DSI84 43-register init table (sn65dsi84,addresses/values, our_dtbo_a.dts
++ *     L1323-1324): the mainline ti-sn65dsi83 driver derives its register setup
++ *     from the panel timings; the binding (ti,sn65dsi83.yaml) has no reg-table
++ *     property. Table preserved in B4 for bench comparison if the panel misbehaves.
++ *   - PCA9450 buck2 I2C-DVS props (pca9450,pmic-buck2-*): vendor-only, no mainline
++ *     binding equivalent.
++ *   - TAS5806 fault-gpios/IRQ/codec-mclk: mainline ti,tas5805m binding is
++ *     i2c + #sound-dai-cells only; amp enables carried as fixed regulators below.
++ *   - FEC: node left disabled — board has no PHY (B4 §14, dead RJ45).
++ */
++
++/dts-v1/;
++
++#include <dt-bindings/gpio/gpio.h>
++#include <dt-bindings/input/input.h>
++#include <dt-bindings/leds/common.h>
++#include <dt-bindings/pwm/pwm.h>
++#include "imx8mm.dtsi"
++
++/ {
++	model = "lululemon Mirror V1.1";
++	compatible = "lululemon,mirror-v1.1", "fsl,imx8mm";
++
++	/* B4 §16: memory@40000000 2 GiB */
++	memory@40000000 {
++		device_type = "memory";
++		reg = <0x0 0x40000000 0 0x80000000>;
++	};
++
++	chosen {
++		/* B4 §1: console = ttymxc1 (UART2 @0x30890000). aliases serial1 = &uart2 */
++		stdout-path = "serial1:115200n8";
++	};
++
++	/* B4 §7: DISP_BLE_EN LED GPIO5_IO13 active-high, default on */
++	leds {
++		compatible = "gpio-leds";
++		pinctrl-names = "default";
++		pinctrl-0 = <&pinctrl_gpio_led>;
++
++		led-ble-en {
++			label = "disp-ble-en";
++			gpios = <&gpio5 13 GPIO_ACTIVE_HIGH>;
++			default-state = "on";
++		};
++	};
++
++	/* B4 §11: Factory-Reset key GPIO5_IO28 active-low, code 121 (0x79), 50 ms */
++	gpio-keys {
++		compatible = "gpio-keys";
++		pinctrl-names = "default";
++		pinctrl-0 = <&pinctrl_factory_reset>;
++
++		key-factory-reset {
++			label = "Factory Reset";
++			gpios = <&gpio5 28 GPIO_ACTIVE_LOW>;
++			linux,code = <KEY_F10>;	/* 121 — B4: vendor code 0x79 */
++			debounce-interval = <50>;
++		};
++	};
++
++	/* B4 §7: backlight power rail GPIO5_IO08 active-high, 3.3 V */
++	reg_blpwr: regulator-blpwr {
++		compatible = "regulator-fixed";
++		pinctrl-names = "default";
++		pinctrl-0 = <&pinctrl_backlight_pwr>;
++		regulator-name = "backlight_pwr";
++		regulator-min-microvolt = <3300000>;
++		regulator-max-microvolt = <3300000>;
++		gpio = <&gpio5 8 GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++	};
++
++	/* B4 §7: PWM2 backlight, 1 kHz period (pwms cell 3 = PWM_POLARITY_INVERTED
++	 * in vendor tuple 0x01) — vendor: pwms = <pwm2 0 1000000 1> */
++	backlight: backlight {
++		compatible = "pwm-backlight";
++		pwms = <&pwm2 0 1000000 PWM_POLARITY_INVERTED>;
++		brightness-levels = <0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16
++				     17 18 19 20 21 22 23 24 25 26 27 28 29 30 31
++				     32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47
++				     48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63
++				     64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79
++				     80 81 82 83 84 85 86 87 88 89 90 91 92 93 94 95
++				     96 97 98 99 100>;
++		/* B4 §7: vendor default level 0x50 = 80 */
++		default-brightness-level = <80>;
++		power-supply = <&reg_blpwr>;
++		status = "okay";
++	};
++
++	/* B4 §5: WL_REG_ON GPIO2_IO10 active-high 1.8 V, off-on-delay 0x4e20 = 20 ms */
++	reg_wlreg_on: regulator-wlreg-on {
++		compatible = "regulator-fixed";
++		pinctrl-names = "default";
++		pinctrl-0 = <&pinctrl_wlreg_on>;
++		regulator-name = "wlreg_on";
++		regulator-min-microvolt = <3300000>; /* BENCH-D6b: CYW43455 SDIO needs 3V3 signaling */
++		regulator-max-microvolt = <3300000>;
++		gpio = <&gpio2 10 GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++		off-on-delay-us = <20000>;
++	};
++
++	/* B4 §6: VSD_3V3 GPIO2_IO19 active-high, off-on-delay-us 0x4e20 = 20 ms */
++	reg_usdhc2_vmmc: regulator-vsd-3v3 {
++		compatible = "regulator-fixed";
++		pinctrl-names = "default";
++		pinctrl-0 = <&pinctrl_usdhc2_vmmc>;
++		regulator-name = "VSD_3V3";
++		regulator-min-microvolt = <3300000>;
++		regulator-max-microvolt = <3300000>;
++		gpio = <&gpio2 19 GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++		off-on-delay-us = <20000>;
++	};
++
++	/* B4 §8: DMIC on SAI5 — model as a generic DMIC DAI for the capture link */
++	dmic: dmic-codec {
++		compatible = "dmic-codec";
++		#sound-dai-cells = <0>;
++	};
++
++	/*
++	 * B4 §8: "sound-tas5806" card — cpu SAI1 (mclk 49.152 MHz), codecs both
++	 * TAS5806 amps, mic on SAI5 async. Mainline choice: fsl,imx-audio-card
++	 * (SND_SOC_IMX_CARD / sound/soc/fsl/imx-card.c) — it is the mainline
++	 * descendant of NXP's tas5806/imx card family and supports multi-codec
++	 * dai-links + routing; simple-card lacks the cpu/codec-subnode link style.
++	 */
++	sound-tas5806 {
++		compatible = "fsl,imx-audio-card";
++		model = "tas5806-audio";
++
++		/* BENCH-D4b: NXP legacy routing dropped - mainline tas5805m
++		 * widgets are DAC IN/DAC/OUT; vendor names SPKOUTL etc dont exist. */
++
++		pri-dai-link {
++			link-name = "tas5806-playback";
++			format = "i2s";
++			cpu {
++				sound-dai = <&sai1>;
++			};
++			codec {
++				sound-dai = <&tas5806_left>, <&tas5806_right>;
++			};
++		};
++
++		mic-dai-link {
++			link-name = "dmic-capture";
++			format = "i2s";
++			capture-only;
++			cpu {
++				sound-dai = <&sai5>;
++			};
++			codec {
++				sound-dai = <&dmic>;
++			};
++		};
++	};
++
++	/* TODO (Phase 2 bench): BT SCO card on SAI2 (B4 §8: sound-bt-sco,
++	 * cpu sai@30020000, i2s, bitclock-master = codec side, TDM 2x16).
++	 * Left out of this build: bt-sco codec wiring is only useful once the
++	 * CYW43455 HCI link is up; enable with a simple-audio-card node then. */
++
++	/* TODO (Phase 2 bench): touch IC — Novatek NT11003 (B4 §12 / B3
++	 * vendor usr/idc/Novatek_NT11003_Touch_Screen.idc). NO DT node exists in
++	 * the vendor tree and NO I2C address is known — DO NOT GUESS. Plan: probe
++	 * I2C1-4 live from the stock U-Boot shell / first Linux boot, then add:
++	 *
++	 * touchscreen@XX {
++	 *     compatible = "novatek,nt11003";
++	 *     reg = <0xXX>;
++	 *     interrupts = <&gpio1 9 IRQ_TYPE_EDGE_FALLING>;	// GPIO1_IO09 pad (synaptics_dsx_iogrp)
++	 * };
++	 */
++
++	reserved-memory {
++		#address-cells = <2>;
++		#size-cells = <2>;
++		/* B4 §16: rpmsg@b8000000 4 MiB (kept even though rpmsg is unused —
++		 * Trusty/TEE is not loaded in our chain, but reserve to be safe) */
++		rpmsg_reserved: rpmsg@b8000000 {
++			no-map;
++			reg = <0 0xb8000000 0 0x400000>;
++		};
++	};
++};
++
++/* Console — B4 §1: UART2, no rtscts, no DMA */
++&uart2 {
++	pinctrl-names = "default";
++	pinctrl-0 = <&pinctrl_uart2>;
++	status = "okay";
++};
++
++/* B4 §2: UART1 = BT HCI /dev/ttymxc0, RTS/CTS on UART3 pads, BT_REG_ON
++ * GPIO2_IO06 active-low (reset 2 ms + 40 ms post). Mainline: hci-bcm serdev. */
++&uart1 {
++	pinctrl-names = "default";
++	pinctrl-0 = <&pinctrl_uart1>;
++	uart-has-rtscts;
++	status = "okay";
++
++	bluetooth {
++		/* CYW43455 = BCM4345C0 chip (B3 patchram
++		 * BCM4345C0_003.001.025.0172.0000_Murata_1MW_Arrow.hcd) */
++		compatible = "brcm,bcm43438-bt";
++		shutdown-gpios = <&gpio2 6 GPIO_ACTIVE_LOW>;
++		max-speed = <3000000>;
++		/* BORROWED (brcm,bcm43438-bt generic + max-speed) — VERIFY AT FIRST BOOT;
++		 * hci_bcm loads the .hcd via /lib/firmware/brcm/BCM4345C0.hcd naming */
++	};
++};
++
++/* B4 §4: eMMC on usdhc3 (mmc dev 2), 14.6 GiB, 8-bit */
++&usdhc3 {
++	pinctrl-names = "default", "state_100mhz", "state_200mhz";
++	pinctrl-0 = <&pinctrl_usdhc3>;
++	pinctrl-1 = <&pinctrl_usdhc3_100mhz>;
++	pinctrl-2 = <&pinctrl_usdhc3_200mhz>;
++	bus-width = <8>;
++	non-removable;
++	status = "okay";
++};
++
++/* B4 §5: WiFi SDIO on usdhc1, CYW43455 (brcmfmac, modular), WL_REG_ON GPIO2_IO10 */
++&usdhc1 {
++	#address-cells = <1>;
++	#size-cells = <0>;
++	pinctrl-names = "default", "state_100mhz", "state_200mhz";
++	/* BENCH-D6 FIX: wlreg_on removed from usdhc1 - regulator owns the pad */
++	pinctrl-0 = <&pinctrl_usdhc1>;
++	pinctrl-1 = <&pinctrl_usdhc1_100mhz>;
++	pinctrl-2 = <&pinctrl_usdhc1_200mhz>;
++	bus-width = <4>;
++	non-removable;
++	keep-power-in-suspend;
++	vmmc-supply = <&reg_wlreg_on>;
++	status = "okay";
++
++	brcmf: wifi@1 {
++		reg = <1>;
++		compatible = "brcm,bcm43455-fmac", "brcm,bcm4329-fmac";
++	};
++};
++
++/* B4 §6: SD slot on usdhc2, CD GPIO1_IO15 active-low, VSD_3V3 */
++&usdhc2 {
++	pinctrl-names = "default", "state_100mhz", "state_200mhz";
++	pinctrl-0 = <&pinctrl_usdhc2>;
++	pinctrl-1 = <&pinctrl_usdhc2_100mhz>;
++	pinctrl-2 = <&pinctrl_usdhc2_200mhz>;
++	cd-gpios = <&gpio1 15 GPIO_ACTIVE_LOW>;
++	vmmc-supply = <&reg_usdhc2_vmmc>;
++	bus-width = <4>;
++	no-sdio;
++	no-mmc;
++	status = "okay";
++};
++
++/* B4 §13: OTG1 = micro-USB J3 (ADB/ums port) */
++&usbotg1 {
++	dr_mode = "otg";
++	hnp-disable;
++	srp-disable;
++	adp-disable;
++	disable-over-current;
++	status = "okay";
++};
++
++&usbphynop1 {
++	wakeup-source;
++	status = "okay";
++};
++
++/* B4 §10: PMIC PCA9450 on I2C1 @0x25 */
++&i2c1 {
++	clock-frequency = <400000>;
++	pinctrl-names = "default";
++	pinctrl-0 = <&pinctrl_i2c1>;
++	status = "okay";
++
++	pmic: pmic@25 {
++		/* Variant suffix unverified (vendor DT says only "nxp,pca9450");
++		 * 8M Mini EVK ships pca9450a — BORROWED, VERIFY AT FIRST BOOT. */
++		compatible = "nxp,pca9450a";
++		reg = <0x25>;
++		pinctrl-names = "default";
++		pinctrl-0 = <&pinctrl_pmic>;
++		interrupt-parent = <&gpio1>;
++		interrupts = <3 IRQ_TYPE_LEVEL_LOW>;	/* B4 §10: GPIO1_IO03 */
++
++		regulators {
++			/* Ranges are OUR unit's (B4 §10, our_dtbo_a.dts L1200-1298):
++			 * buck1-3: 0.6-2.1875 V, buck4-6: 0.6-3.4 V, ldo1: 1.6-3.3 V,
++			 * ldo2: max 1.15 V, ldo3/4: max 3.3 V (vendor min cells decode
++			 * empty — standard 1.5 V used: BORROWED), ldo5: 1.8-3.3 V. */
++			buck1_reg: BUCK1 {
++				regulator-name = "BUCK1";
++				regulator-min-microvolt = <600000>;
++				regulator-max-microvolt = <2187500>;
++				regulator-boot-on;
++				regulator-always-on;
++				regulator-ramp-delay = <3125>;	/* vendor 0xc35 */
++			};
++
++			buck2_reg: BUCK2 {	/* VDD_ARM, I2C-DVS'd in vendor */
++				regulator-name = "BUCK2";
++				regulator-min-microvolt = <600000>;
++				regulator-max-microvolt = <2187500>;
++				regulator-boot-on;
++				regulator-always-on;
++				regulator-ramp-delay = <3125>;
++			};
++
++			buck3_reg: BUCK3 {
++				regulator-name = "BUCK3";
++				regulator-min-microvolt = <600000>;
++				regulator-max-microvolt = <2187500>;
++				regulator-boot-on;
++				regulator-always-on;
++			};
++
++			buck4_reg: BUCK4 {
++				regulator-name = "BUCK4";
++				regulator-min-microvolt = <600000>;
++				regulator-max-microvolt = <3400000>;
++				regulator-boot-on;
++				regulator-always-on;
++			};
++
++			buck5_reg: BUCK5 {
++				regulator-name = "BUCK5";
++				regulator-min-microvolt = <600000>;
++				regulator-max-microvolt = <3400000>;
++				regulator-boot-on;
++				regulator-always-on;
++			};
++
++			buck6_reg: BUCK6 {
++				regulator-name = "BUCK6";
++				regulator-min-microvolt = <600000>;
++				regulator-max-microvolt = <3400000>;
++				regulator-boot-on;
++				regulator-always-on;
++			};
++
++			ldo1_reg: LDO1 {
++				regulator-name = "LDO1";
++				regulator-min-microvolt = <1600000>;
++				regulator-max-microvolt = <3300000>;
++				regulator-boot-on;
++				regulator-always-on;
++			};
++
++			ldo2_reg: LDO2 {
++				regulator-name = "LDO2";
++				regulator-min-microvolt = <800000>;	/* BORROWED min */
++				regulator-max-microvolt = <1150000>;
++				regulator-boot-on;
++				regulator-always-on;
++			};
++
++			ldo3_reg: LDO3 {
++				regulator-name = "LDO3";
++				regulator-min-microvolt = <1500000>;	/* BORROWED min */
++				regulator-max-microvolt = <3300000>;
++				regulator-boot-on;
++				regulator-always-on;
++			};
++
++			ldo4_reg: LDO4 {
++				regulator-name = "LDO4";
++				regulator-min-microvolt = <1500000>;	/* BORROWED min */
++				regulator-max-microvolt = <3300000>;
++				regulator-boot-on;
++				regulator-always-on;
++			};
++
++			ldo5_reg: LDO5 {
++				regulator-name = "LDO5";
++				regulator-min-microvolt = <3300000>; /* BENCH-D6b: CYW43455 SDIO needs 3V3 signaling */
++				regulator-max-microvolt = <3300000>;
++			};
++		};
++	};
++};
++
++/* B4 §7: SN65DSI84 DSI→LVDS bridge on I2C2 @0x2c, enable GPIO1_IO08 */
++&i2c2 {
++	clock-frequency = <400000>;
++	pinctrl-names = "default";
++	pinctrl-0 = <&pinctrl_i2c2>;
++	status = "okay";
++
++	bridge: bridge@2c {
++		/* NOTE: mainline driver/binding use the sn65dsi83 compatible for
++		 * the SN65DSI84 too (ti-sn65dsi83.c handles both). */
++		compatible = "ti,sn65dsi83";
++		reg = <0x2c>;
++		pinctrl-names = "default";
++		pinctrl-0 = <&pinctrl_mipi_dsi_en>;
++		enable-gpios = <&gpio1 8 GPIO_ACTIVE_HIGH>;
++		/* D3 fix: vendor LVDS output-stage override — panel only locks
++		 * with the vendor dtbo register values (0x0b=0x28 etc.),
++		 * see work/D3_vendor_bridge_table.md */
++		ti,lvds-vendor-override;
++
++		ports {
++			#address-cells = <1>;
++			#size-cells = <0>;
++
++			port@0 {
++				reg = <0>;
++
++				bridge_in: endpoint {
++					remote-endpoint = <&dsi_out>;
++					data-lanes = <1 2 3 4>;	/* B4: 4 DSI lanes */
++				};
++			};
++
++			port@2 {
++				reg = <2>;
++
++				bridge_out: endpoint {
++					remote-endpoint = <&panel_in>;
++				};
++			};
++		};
++	};
++};
++
++/* B4 §9: OV5640 on I2C3 @0x3c (100 kHz bus) */
++&i2c3 {
++	clock-frequency = <100000>;
++	pinctrl-names = "default";
++	pinctrl-0 = <&pinctrl_i2c3>;
++	status = "okay";
++
++	ov5640: camera@3c {
++		compatible = "ovti,ov5640";
++		reg = <0x3c>;
++		pinctrl-names = "default";
++		pinctrl-0 = <&pinctrl_csi_pwn>, <&pinctrl_csi_rst>;
++		/* B4 §9: MCLK 24 MHz routed out on GPIO1_IO01 pad
++		 * (ANAMIX_REF_CLK_24M) — BORROWED xclk wiring, VERIFY */
++		clocks = <&clk IMX8MM_CLK_24M>;
++		clock-names = "xclk";
++		powerdown-gpios = <&gpio1 7 GPIO_ACTIVE_HIGH>;	/* pwn GPIO1_IO07 */
++		reset-gpios = <&gpio1 6 GPIO_ACTIVE_LOW>;	/* rst GPIO1_IO06 */
++		DOVDD-supply = <&ldo3_reg>;	/* BORROWED rails — VERIFY */
++		AVDD-supply = <&ldo4_reg>;
++		DVDD-supply = <&buck5_reg>;
++
++		port {
++			ov5640_out: endpoint {
++				remote-endpoint = <&mipi_csi_in>;
++				clock-lanes = <0>;
++				data-lanes = <1 2>;		/* B4: 2-lane CSI */
++			};
++		};
++	};
++};
++
++/* B4 §8: 2x TAS5806M on I2C4 @0x2c/@0x2f */
++&i2c4 {
++	clock-frequency = <400000>;
++	pinctrl-names = "default";
++	pinctrl-0 = <&pinctrl_i2c4>;
++	status = "okay";
++
++	tas5806_left: amplifier@2c {
++		compatible = "ti,tas5805m";
++		reg = <0x2c>;
++		#sound-dai-cells = <0>;
++		/* B4 §8: enable GPIO4_IO16 active-high == PDN (active-low power-down).
++		 * tas5805m.c drives pdn logical 0 (physical high = ON) at probe. */
++		pdn-gpios = <&gpio4 16 GPIO_ACTIVE_LOW>;
++	};
++
++	tas5806_right: amplifier@2f {
++		compatible = "ti,tas5805m";
++		reg = <0x2f>;
++		#sound-dai-cells = <0>;
++		pdn-gpios = <&gpio4 17 GPIO_ACTIVE_LOW>;
++	};
++};
++
++/* B4 §7: display pipeline — lcdif → DSIM (4 lane) → SN65DSI84 → LVDS panel.
++ * Dumb LVDS panel behind the bridge: panel-lvds with the vendor hj070na
++ * timings (148.5 MHz 1920x1080@60). */
++&lcdif {
++	status = "okay";
++};
++
++&mipi_dsi {
++	samsung,esc-clock-frequency = <20000000>;	/* BORROWED esc clock */
++	status = "okay";
++
++	ports {
++		port@1 {
++			reg = <1>;
++
++			dsi_out: endpoint {
++				remote-endpoint = <&bridge_in>;
++				data-lanes = <1 2 3 4>;
++			};
++		};
++	};
++};
++
++/* B4 §9: MIPI CSI-2 receiver (fsl,imx8mm-mipi-csi2) */
++&mipi_csi {
++	status = "okay";
++
++	ports {
++		port@0 {
++			reg = <0>;
++
++			mipi_csi_in: endpoint {
++				remote-endpoint = <&ov5640_out>;
++				data-lanes = <1 2>;
++				/* B4: csis-hs-settle 0x0d, clk-settle 0x02 */
++			};
++		};
++	};
++};
++
++&csi {
++	status = "okay";
++};
++
++/* B4 §8: SAI1 = speaker I2S out, MCLK output pad muxed (49.152 MHz).
++ * BENCH-D4c FIX (2026-10-31): vendor DT drove codec mclk at 49.152 MHz
++ * (B4: MCLK 49.152 MHz on 0x2c assigned-clocks 0x16e1080-adjacent chain).
++ * Mainline needs the rate chain on the SAI: audio_pll2 -> 786.432 MHz,
++ * SAI1 root div -> 49.152 MHz. Without this MCLK ran from a wrong parent
++ * and the TAS5806 DSP never clocked -> silence. */
++&sai1 {
++	pinctrl-names = "default";
++	pinctrl-0 = <&pinctrl_sai1>;
++	fsl,sai-mclk-direction-output;
++	#sound-dai-cells = <0>;
++	assigned-clocks = <&clk IMX8MM_AUDIO_PLL2>, <&clk IMX8MM_CLK_SAI1>;
++	assigned-clock-rates = <786432000>, <49152000>;
++	status = "okay";
++};
++
++/* B4 §8: SAI5 = DMIC (asynchronous) */
++&sai5 {
++	pinctrl-names = "default";
++	pinctrl-0 = <&pinctrl_sai5>;
++	fsl,sai-asynchronous;
++	#sound-dai-cells = <0>;
++	status = "okay";
++};
++
++/* B4 §8: SAI2 = BT SCO (pads muxed, card deferred — see TODO above) */
++&sai2 {
++	pinctrl-names = "default";
++	pinctrl-0 = <&pinctrl_sai2>;
++	#sound-dai-cells = <0>;
++	status = "disabled";
++};
++
++/* GPU was "okay" in our stock DT (B4 §15); etnaviv works mainline */
++&gpu_3d {
++	status = "okay";
++};
++
++/* fec left disabled: no PHY on board (B4 §14) */
++
++&pwm2 {
++	pinctrl-names = "default";
++	pinctrl-0 = <&pinctrl_dsi_pwm>;
++	status = "okay";
++};
++
++&iomuxc {
++	/* Every tuple: raw values from our_dtbo_a.dts, resolved against the
++	 * mainline imx8mm-pinfunc.h bundled with this kernel tree (see
++	 * work/B4_pinfunc_decode.txt). Vendor mux modes with the 0x10 SION
++	 * bit set are ported as the plain mainline mode. */
++
++	pinctrl_uart1: uart1grp {
++		fsl,pins = <
++			MX8MM_IOMUXC_UART1_RXD_UART1_DCE_RX		0x140
++			MX8MM_IOMUXC_UART1_TXD_UART1_DCE_TX		0x140
++			/* UART3 pads muxed as UART1 RTS/CTS (B4 §2) */
++			MX8MM_IOMUXC_UART3_RXD_UART1_DCE_CTS_B	0x140
++			MX8MM_IOMUXC_UART3_TXD_UART1_DCE_RTS_B	0x140
++			/* BT_REG_ON GPIO2_IO06 (pad SD1_DATA4, mode 5) */
++			MX8MM_IOMUXC_SD1_DATA4_GPIO2_IO6		0x19
++		>;
++	};
++
++	pinctrl_uart2: uart2grp {
++		fsl,pins = <
++			MX8MM_IOMUXC_UART2_RXD_UART2_DCE_RX	0x140
++			MX8MM_IOMUXC_UART2_TXD_UART2_DCE_TX	0x140
++		>;
++	};
++
++	pinctrl_i2c1: i2c1grp {
++		fsl,pins = <
++			MX8MM_IOMUXC_I2C1_SCL_I2C1_SCL		0x400001c3
++			MX8MM_IOMUXC_I2C1_SDA_I2C1_SDA		0x400001c3
++		>;
++	};
++
++	pinctrl_pmic: pmicirqgrp {
++		fsl,pins = <
++			MX8MM_IOMUXC_GPIO1_IO03_GPIO1_IO3	0x41
++		>;
++	};
++
++	pinctrl_i2c2: i2c2grp {
++		fsl,pins = <
++			MX8MM_IOMUXC_I2C2_SCL_I2C2_SCL		0x400001c3
++			MX8MM_IOMUXC_I2C2_SDA_I2C2_SDA		0x400001c3
++		>;
++	};
++
++	pinctrl_i2c3: i2c3grp {
++		fsl,pins = <
++			MX8MM_IOMUXC_I2C3_SCL_I2C3_SCL		0x400001c3
++			MX8MM_IOMUXC_I2C3_SDA_I2C3_SDA		0x400001c3
++		>;
++	};
++
++	pinctrl_i2c4: i2c4grp {
++		fsl,pins = <
++			MX8MM_IOMUXC_I2C4_SCL_I2C4_SCL		0x400001c3
++			MX8MM_IOMUXC_I2C4_SDA_I2C4_SDA		0x400001c3
++		>;
++	};
++
++	pinctrl_mipi_dsi_en: mipidsiengrp {
++		fsl,pins = <
++			/* bridge enable GPIO1_IO08 (B4 §7) */
++			MX8MM_IOMUXC_GPIO1_IO08_GPIO1_IO8	0x19
++		>;
++	};
++
++	pinctrl_gpio_led: gpioledgrp {
++		fsl,pins = <
++			/* DISP_BLE_EN GPIO5_IO13 (B4 §7) */
++			MX8MM_IOMUXC_ECSPI2_SS0_GPIO5_IO13	0x19
++		>;
++	};
++
++	pinctrl_factory_reset: keygrp {
++		fsl,pins = <
++			/* Factory-Reset GPIO5_IO28 (B4 §11, pad UART4_RXD) */
++			MX8MM_IOMUXC_UART4_RXD_GPIO5_IO28		0x1c6
++		>;
++	};
++
++	pinctrl_wlreg_on: usdhc1-gpiogrp {
++		fsl,pins = <
++			/* WL_REG_ON GPIO2_IO10 (B4 §5, pad SD1_RESET_B mode 5) */
++			MX8MM_IOMUXC_SD1_RESET_B_GPIO2_IO10		0x41
++		>;
++	};
++
++	pinctrl_wlan: wlangrp {
++		fsl,pins = <
++			/* 32 kHz sleep clock to CYW module (GPIO1_IO00 pad) */
++			MX8MM_IOMUXC_GPIO1_IO00_ANAMIX_REF_CLK_32K	0x141
++			/* module status/OOB GPIO2_IO09 (pad SD1_DATA7) */
++			MX8MM_IOMUXC_SD1_DATA7_GPIO2_IO9	0x111
++		>;
++	};
++
++	pinctrl_usdhc1: usdhc1grp {
++		fsl,pins = <
++			MX8MM_IOMUXC_SD1_CLK_USDHC1_CLK		0x190
++			MX8MM_IOMUXC_SD1_CMD_USDHC1_CMD		0x1d0
++			MX8MM_IOMUXC_SD1_DATA0_USDHC1_DATA0	0x1d0
++			MX8MM_IOMUXC_SD1_DATA1_USDHC1_DATA1	0x1d0
++			MX8MM_IOMUXC_SD1_DATA2_USDHC1_DATA2	0x1d0
++			MX8MM_IOMUXC_SD1_DATA3_USDHC1_DATA3	0x1d0
++		>;
++	};
++
++	pinctrl_usdhc1_100mhz: usdhc1-100mhzgrp {
++		fsl,pins = <
++			MX8MM_IOMUXC_SD1_CLK_USDHC1_CLK		0x194
++			MX8MM_IOMUXC_SD1_CMD_USDHC1_CMD		0x1d4
++			MX8MM_IOMUXC_SD1_DATA0_USDHC1_DATA0	0x1d4
++			MX8MM_IOMUXC_SD1_DATA1_USDHC1_DATA1	0x1d4
++			MX8MM_IOMUXC_SD1_DATA2_USDHC1_DATA2	0x1d4
++			MX8MM_IOMUXC_SD1_DATA3_USDHC1_DATA3	0x1d4
++		>;
++	};
++
++	pinctrl_usdhc1_200mhz: usdhc1-200mhzgrp {
++		fsl,pins = <
++			MX8MM_IOMUXC_SD1_CLK_USDHC1_CLK		0x196
++			MX8MM_IOMUXC_SD1_CMD_USDHC1_CMD		0x1d6
++			MX8MM_IOMUXC_SD1_DATA0_USDHC1_DATA0	0x1d6
++			MX8MM_IOMUXC_SD1_DATA1_USDHC1_DATA1	0x1d6
++			MX8MM_IOMUXC_SD1_DATA2_USDHC1_DATA2	0x1d6
++			MX8MM_IOMUXC_SD1_DATA3_USDHC1_DATA3	0x1d6
++		>;
++	};
++
++	pinctrl_usdhc2: usdhc2grp {
++		fsl,pins = <
++			MX8MM_IOMUXC_SD2_CLK_USDHC2_CLK		0x190
++			MX8MM_IOMUXC_SD2_CMD_USDHC2_CMD		0x1d0
++			MX8MM_IOMUXC_SD2_DATA0_USDHC2_DATA0	0x1d0
++			MX8MM_IOMUXC_SD2_DATA1_USDHC2_DATA1	0x1d0
++			MX8MM_IOMUXC_SD2_DATA2_USDHC2_DATA2	0x1d0
++			MX8MM_IOMUXC_SD2_DATA3_USDHC2_DATA3	0x1d0
++			/* 1.8/3.3 V level shift select (GPIO1_IO04 pad) */
++			MX8MM_IOMUXC_GPIO1_IO04_USDHC2_VSELECT	0x1d0
++		>;
++	};
++
++	pinctrl_usdhc2_100mhz: usdhc2-100mhzgrp {
++		fsl,pins = <
++			MX8MM_IOMUXC_SD2_CLK_USDHC2_CLK		0x194
++			MX8MM_IOMUXC_SD2_CMD_USDHC2_CMD		0x1d4
++			MX8MM_IOMUXC_SD2_DATA0_USDHC2_DATA0	0x1d4
++			MX8MM_IOMUXC_SD2_DATA1_USDHC2_DATA1	0x1d4
++			MX8MM_IOMUXC_SD2_DATA2_USDHC2_DATA2	0x1d4
++			MX8MM_IOMUXC_SD2_DATA3_USDHC2_DATA3	0x1d4
++			MX8MM_IOMUXC_GPIO1_IO04_USDHC2_VSELECT	0x1d0
++		>;
++	};
++
++	pinctrl_usdhc2_200mhz: usdhc2-200mhzgrp {
++		fsl,pins = <
++			MX8MM_IOMUXC_SD2_CLK_USDHC2_CLK		0x196
++			MX8MM_IOMUXC_SD2_CMD_USDHC2_CMD		0x1d6
++			MX8MM_IOMUXC_SD2_DATA0_USDHC2_DATA0	0x1d6
++			MX8MM_IOMUXC_SD2_DATA1_USDHC2_DATA1	0x1d6
++			MX8MM_IOMUXC_SD2_DATA2_USDHC2_DATA2	0x1d6
++			MX8MM_IOMUXC_SD2_DATA3_USDHC2_DATA3	0x1d6
++			MX8MM_IOMUXC_GPIO1_IO04_USDHC2_VSELECT	0x1d0
++		>;
++	};
++
++	pinctrl_usdhc2_vmmc: regusdhc2vmmcgrp {
++		fsl,pins = <
++			/* VSD_3V3 enable GPIO2_IO19 (pad SD2_RESET_B mode 5) */
++			MX8MM_IOMUXC_SD2_RESET_B_GPIO2_IO19	0x41
++		>;
++	};
++
++	pinctrl_usdhc3: usdhc3grp {
++		fsl,pins = <
++			/* mainline macro carries the vendor 0x12 (SION|2) mode verbatim */
++			MX8MM_IOMUXC_NAND_WE_B_USDHC3_CLK		0x190
++			MX8MM_IOMUXC_NAND_WP_B_USDHC3_CMD	0x1d0
++			MX8MM_IOMUXC_NAND_DATA04_USDHC3_DATA0	0x1d0
++			MX8MM_IOMUXC_NAND_DATA05_USDHC3_DATA1	0x1d0
++			MX8MM_IOMUXC_NAND_DATA06_USDHC3_DATA2	0x1d0
++			MX8MM_IOMUXC_NAND_DATA07_USDHC3_DATA3	0x1d0
++			MX8MM_IOMUXC_NAND_RE_B_USDHC3_DATA4	0x1d0
++			MX8MM_IOMUXC_NAND_CE2_B_USDHC3_DATA5	0x1d0
++			MX8MM_IOMUXC_NAND_CE3_B_USDHC3_DATA6	0x1d0
++			MX8MM_IOMUXC_NAND_CLE_USDHC3_DATA7	0x1d0
++			MX8MM_IOMUXC_NAND_CE1_B_USDHC3_STROBE	0x190
++		>;
++	};
++
++	pinctrl_usdhc3_100mhz: usdhc3-100mhzgrp {
++		fsl,pins = <
++			MX8MM_IOMUXC_NAND_WE_B_USDHC3_CLK		0x194
++			MX8MM_IOMUXC_NAND_WP_B_USDHC3_CMD	0x1d4
++			MX8MM_IOMUXC_NAND_DATA04_USDHC3_DATA0	0x1d4
++			MX8MM_IOMUXC_NAND_DATA05_USDHC3_DATA1	0x1d4
++			MX8MM_IOMUXC_NAND_DATA06_USDHC3_DATA2	0x1d4
++			MX8MM_IOMUXC_NAND_DATA07_USDHC3_DATA3	0x1d4
++			MX8MM_IOMUXC_NAND_RE_B_USDHC3_DATA4	0x1d4
++			MX8MM_IOMUXC_NAND_CE2_B_USDHC3_DATA5	0x1d4
++			MX8MM_IOMUXC_NAND_CE3_B_USDHC3_DATA6	0x1d4
++			MX8MM_IOMUXC_NAND_CLE_USDHC3_DATA7	0x1d4
++			MX8MM_IOMUXC_NAND_CE1_B_USDHC3_STROBE	0x194
++		>;
++	};
++
++	pinctrl_usdhc3_200mhz: usdhc3-200mhzgrp {
++		fsl,pins = <
++			MX8MM_IOMUXC_NAND_WE_B_USDHC3_CLK		0x196
++			MX8MM_IOMUXC_NAND_WP_B_USDHC3_CMD	0x1d6
++			MX8MM_IOMUXC_NAND_DATA04_USDHC3_DATA0	0x1d6
++			MX8MM_IOMUXC_NAND_DATA05_USDHC3_DATA1	0x1d6
++			MX8MM_IOMUXC_NAND_DATA06_USDHC3_DATA2	0x1d6
++			MX8MM_IOMUXC_NAND_DATA07_USDHC3_DATA3	0x1d6
++			MX8MM_IOMUXC_NAND_RE_B_USDHC3_DATA4	0x1d6
++			MX8MM_IOMUXC_NAND_CE2_B_USDHC3_DATA5	0x1d6
++			MX8MM_IOMUXC_NAND_CE3_B_USDHC3_DATA6	0x1d6
++			MX8MM_IOMUXC_NAND_CLE_USDHC3_DATA7	0x1d6
++			MX8MM_IOMUXC_NAND_CE1_B_USDHC3_STROBE	0x196
++		>;
++	};
++
++	pinctrl_sai1: sai1grp {
++		fsl,pins = <
++			MX8MM_IOMUXC_SAI1_MCLK_SAI1_MCLK		0xd6
++			MX8MM_IOMUXC_SAI1_TXFS_SAI1_TX_SYNC		0xd6
++			MX8MM_IOMUXC_SAI1_RXD7_SAI1_TX_SYNC		0xd6
++			MX8MM_IOMUXC_SAI1_TXC_SAI1_TX_BCLK		0xd6
++			MX8MM_IOMUXC_SAI1_TXD0_SAI1_TX_DATA0	0xd6
++			MX8MM_IOMUXC_SAI1_TXD1_SAI1_TX_DATA1	0xd6
++			MX8MM_IOMUXC_SAI1_RXD0_SAI1_RX_DATA0	0xd6
++			MX8MM_IOMUXC_SAI1_RXD1_SAI1_RX_DATA1	0xd6
++		>;
++	};
++
++	pinctrl_sai2: sai2grp {
++		fsl,pins = <
++			MX8MM_IOMUXC_SAI2_TXC_SAI2_TX_BCLK		0xd6
++			MX8MM_IOMUXC_SAI2_TXFS_SAI2_TX_SYNC		0xd6
++			MX8MM_IOMUXC_SAI2_TXD0_SAI2_TX_DATA0	0xd6
++			MX8MM_IOMUXC_SAI2_RXD0_SAI2_RX_DATA0	0xd6
++		>;
++	};
++
++	pinctrl_sai5: sai5grp {
++		fsl,pins = <
++			MX8MM_IOMUXC_SAI5_MCLK_SAI5_MCLK		0xd6
++			MX8MM_IOMUXC_SAI5_RXC_SAI5_RX_BCLK		0xd6
++			MX8MM_IOMUXC_SAI5_RXFS_SAI5_RX_SYNC		0xd6
++			MX8MM_IOMUXC_SAI5_RXD0_SAI5_RX_DATA0	0xd6
++		>;
++	};
++
++	pinctrl_csi_pwn: csipwngrp {
++		fsl,pins = <
++			/* OV5640 PWDN GPIO1_IO07 (B4 §9) */
++			MX8MM_IOMUXC_GPIO1_IO07_GPIO1_IO7	0x19
++		>;
++	};
++
++	pinctrl_csi_rst: csirstgrp {
++		fsl,pins = <
++			/* OV5640 RESET GPIO1_IO06 + 24 MHz MCLK out on GPIO1_IO01 pad */
++			MX8MM_IOMUXC_GPIO1_IO06_GPIO1_IO6	0x19
++			MX8MM_IOMUXC_GPIO1_IO01_ANAMIX_REF_CLK_24M	0x59
++		>;
++	};
++
++	pinctrl_backlight_pwr: backlightpwrgrp {
++		fsl,pins = <
++			/* backlight power GPIO5_IO08 (pad ECSPI1_MISO mode 5) */
++			MX8MM_IOMUXC_ECSPI1_MISO_GPIO5_IO8		0x19
++		>;
++	};
++
++	pinctrl_dsi_pwm: dsipwmgrp {
++		fsl,pins = <
++			/* backlight PWM on PWM2 (pad SPDIF_RX mode 1) */
++			MX8MM_IOMUXC_SPDIF_RX_PWM2_OUT			0x16
++		>;
++	};
++
++	pinctrl_wdog: wdoggrp {
++		fsl,pins = <
++			/* watchdog hard-reset line (B4 §15: wdog1 okay, ext-reset) */
++			MX8MM_IOMUXC_GPIO1_IO02_WDOG1_WDOG_B		0xc6
++		>;
++	};
++
++	/* B4 §12: touch IRQ line pad (no touch device node — see TODO above) */
++	pinctrl_touch: synapticsdsxgrp {
++		fsl,pins = <
++			MX8MM_IOMUXC_GPIO1_IO09_GPIO1_IO9		0x19
++		>;
++	};
++};
++
++&wdog1 {
++	pinctrl-names = "default";
++	pinctrl-0 = <&pinctrl_wdog>;
++	fsl,ext-reset-output;
++	status = "okay";
++};
++
++/* LVDS panel behind the SN65DSI84 — vendor timings (B4 §7): hj070na,
++ * 148.5 MHz, 1920x1080@60 (hfp 80 hsync 120 hbp 80 / vfp 5 vsync 15 vbp 25).
++ * panel-lvds binding: vendor compatible + "panel-lvds" fallback;
++ * "tn,hj070na" added to the local panel-lvds enum patch (see C_results). */
++/ {
++	panel: lvds-panel {
++		compatible = "tn,hj070na", "panel-lvds";
++		width-mm = <889>;	/* vendor panel-width-mm 0x375 — NXP misuse,
++					   B4 §7: tag stays dubious, harmless */
++		height-mm = <498>;	/* vendor 0x1f2 */
++		data-mapping = "vesa-24";
++		backlight = <&backlight>;
++
++		panel-timing {
++			clock-frequency = <148500000>;
++			hactive = <1920>;
++			vactive = <1080>;
++			hfront-porch = <80>;
++			hsync-len = <120>;
++			hback-porch = <80>;
++			vfront-porch = <5>;
++			vsync-len = <15>;
++			vback-porch = <25>;
++			hsync-active = <0>;
++			vsync-active = <0>;
++			de-active = <1>;
++			pixelclk-active = <0>;
++		};
++
++		port {
++			panel_in: endpoint {
++				remote-endpoint = <&bridge_out>;
++			};
++		};
++	};
++};
+\ No newline at end of file
+diff --git a/drivers/gpu/drm/bridge/ti-sn65dsi83.c b/drivers/gpu/drm/bridge/ti-sn65dsi83.c
+index 11513b0a0..887b7f248 100644
+--- a/drivers/gpu/drm/bridge/ti-sn65dsi83.c
++++ b/drivers/gpu/drm/bridge/ti-sn65dsi83.c
+@@ -159,6 +159,16 @@ struct sn65dsi83 {
+ 	struct regulator		*vcc;
+ 	bool				lvds_dual_link;
+ 	bool				lvds_dual_link_even_odd_swap;
++	/*
++	 * Vendor LVDS output-stage override (DT: "ti,lvds-vendor-override").
++	 * The Mirror's panel only locks with the register values NXP's
++	 * vendor sn65dsi84 driver wrote (decoded from the vendor dtbo);
++	 * the values the mainline driver derives from the panel timings
++	 * leave the LVDS receiver unsynced (panel stuck in factory aging
++	 * pattern). When set, apply the vendor values below after the
++	 * driver's own config, before the PLL is enabled.
++	 */
++	bool				lvds_vendor_override;
+ 	int				lvds_vod_swing_conf[2];
+ 	int				lvds_term_conf[2];
+ 	int				irq;
+@@ -471,6 +481,35 @@ static void sn65dsi83_monitor_stop(struct sn65dsi83 *ctx)
+ 	cancel_delayed_work_sync(&ctx->monitor_work);
+ }
+ 
++/*
++ * Vendor LVDS output-stage overrides for the lululemon Mirror V1.1 panel,
++ * from the vendor sn65dsi84 init table decoded out of the factory dtbo
++ * (work/D3_vendor_bridge_table.md). Only regs whose vendor values differ
++ * from what this driver derives are listed; everything else (DSI-side,
++ * actives 0x20..0x27, sync delay 0x28/29) already matches.
++ */
++static const struct reg_sequence sn65dsi83_mirror_vendor_override[] = {
++	/* LVDS clock mode / DSI clock divider: vendor 0x28 (mainline 0x10) */
++	{ REG_RC_DSI_CLK,				0x28 },
++	/* LVDS format (JEIDA + polarity + link cfg): vendor 0x6c (0x78) */
++	{ REG_LVDS_FMT,					0x6c },
++	/* CHA sync/timing: vendor fixed values (mainline derives 0/0x0f/0x50/0) */
++	{ REG_VID_CHA_HSYNC_PULSE_WIDTH_LOW,		0x64 },
++	{ REG_VID_CHA_VSYNC_PULSE_WIDTH_LOW,		0x19 },
++	{ REG_VID_CHA_HORIZONTAL_BACK_PORCH,		0x19 },
++	{ REG_VID_CHA_VERTICAL_BACK_PORCH,		0x14 },
++	{ REG_VID_CHA_HORIZONTAL_FRONT_PORCH,		0x14 },
++	{ REG_VID_CHA_VERTICAL_FRONT_PORCH,		0x14 },
++};
++
++static void sn65dsi83_apply_vendor_override(struct sn65dsi83 *ctx)
++{
++	regmap_multi_reg_write(ctx->regmap, sn65dsi83_mirror_vendor_override,
++			       ARRAY_SIZE(sn65dsi83_mirror_vendor_override));
++	dev_info(ctx->dev, "vendor LVDS override applied (%zu regs)\n",
++		 ARRAY_SIZE(sn65dsi83_mirror_vendor_override));
++}
++
+ static void sn65dsi83_atomic_pre_enable(struct drm_bridge *bridge,
+ 					struct drm_atomic_state *state)
+ {
+@@ -624,6 +663,15 @@ static void sn65dsi83_atomic_pre_enable(struct drm_bridge *bridge,
+ 		     mode->vsync_start - mode->vdisplay);
+ 	regmap_write(ctx->regmap, REG_VID_CHA_TEST_PATTERN, 0x00);
+ 
++	/*
++	 * Mirror panel fix: overwrite the LVDS output-stage regs with the
++	 * vendor values BEFORE the PLL is enabled, so the PLL locks with
++	 * the vendor clock config. PLL_EN (0x0d) remains the last write,
++	 * matching the vendor sequence.
++	 */
++	if (ctx->lvds_vendor_override)
++		sn65dsi83_apply_vendor_override(ctx);
++
+ 	/* Enable PLL */
+ 	regmap_write(ctx->regmap, REG_RC_PLL_EN, REG_RC_PLL_EN_PLL_EN);
+ 	usleep_range(3000, 4000);
+@@ -850,6 +898,10 @@ static int sn65dsi83_parse_dt(struct sn65dsi83 *ctx, enum sn65dsi83_model model)
+ 
+ 	ctx->lvds_dual_link = false;
+ 	ctx->lvds_dual_link_even_odd_swap = false;
++
++	/* Mirror: optional vendor LVDS output-stage override */
++	ctx->lvds_vendor_override =
++		of_property_read_bool(dev->of_node, "ti,lvds-vendor-override");
+ 	if (model != MODEL_SN65DSI83) {
+ 		struct device_node *port2, *port3;
+ 		int dual_link;
+-- 
+2.43.0
+

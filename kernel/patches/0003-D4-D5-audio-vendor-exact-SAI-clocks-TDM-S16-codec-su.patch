@@ -1,0 +1,245 @@
+From cbd46bc207016e265d2ece8ce4cf720f35744ef7 Mon Sep 17 00:00:00 2001
+From: mirror <mirror@build>
+Date: Sat, 31 Oct 2026 09:24:02 +0000
+Subject: [PATCH 3/6] D4/D5 audio: vendor-exact SAI clocks + TDM + S16 codec
+ support
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- sai1/sai5: full vendor clock spec (bus/mclk/pll8k/pll11k) so
+  fsl_asoc_reparent_pll_clocks() can parent roots to AUDIO_PLL1_OUT
+  @49.152MHz (fixes all hw_params -22 derive failures)
+- sai1 dataline <2 0xff 0xff 2 0xff 0xff>, sai5 <0 0x0f 0x0f> (vendor)
+- card: 2-slot TDM 16-bit (vendor imx_hifi_hw_params equivalent)
+- tas5805m: allow S16_LE (vendor DSP program expects 16-bit serial)
+- tas5805m: pdn-gpios ACTIVE_HIGH semantics matched vendor enable pulse
+- deployed as dtb v17 + updated ko; speakers now audible (still
+  distorted — DSP serial-format regs are the remaining knob)
+- sai5/DMIC capture: clocks fixed, capture EIO remains (next session)
+---
+ .../boot/dts/freescale/imx8mm-mirror.dts      | 51 ++++++++++++-
+ sound/soc/codecs/tas5805m.c                   | 75 ++++++++++++++++---
+ 2 files changed, 112 insertions(+), 14 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/freescale/imx8mm-mirror.dts b/arch/arm64/boot/dts/freescale/imx8mm-mirror.dts
+index 11ac78a07..937a1fec0 100644
+--- a/arch/arm64/boot/dts/freescale/imx8mm-mirror.dts
++++ b/arch/arm64/boot/dts/freescale/imx8mm-mirror.dts
+@@ -25,6 +25,7 @@
+ 
+ /dts-v1/;
+ 
++#include <dt-bindings/clock/imx8mm-clock.h>
+ #include <dt-bindings/gpio/gpio.h>
+ #include <dt-bindings/input/input.h>
+ #include <dt-bindings/leds/common.h>
+@@ -152,6 +153,11 @@ sound-tas5806 {
+ 		pri-dai-link {
+ 			link-name = "tas5806-playback";
+ 			format = "i2s";
++			/* D4 fix: 2-slot TDM, 16-bit slot width (vendor-exact — their
++			 * DSP program configures the amp serial port for 16-bit
++			 * slots; codec driver now accepts S16 too). */
++			dai-tdm-slot-num = <2>;
++			dai-tdm-slot-width = <16>;
+ 			cpu {
+ 				sound-dai = <&sai1>;
+ 			};
+@@ -216,6 +222,11 @@ &uart1 {
+ 	pinctrl-0 = <&pinctrl_uart1>;
+ 	uart-has-rtscts;
+ 	status = "okay";
++	/* D7 fix (vendor dtbo serial@30860000): re-parent UART1 root clock to
++	 * SYS_PLL1_80M (imx8mm-clock.h id 49; default OSC_24M parent cannot
++	 * cleanly divide to 3 Mbaud for the BCM4345C0). */
++	assigned-clocks = <&clk IMX8MM_CLK_UART1_ROOT>;
++	assigned-clock-parents = <&clk IMX8MM_SYS_PLL1_80M>;
+ 
+ 	bluetooth {
+ 		/* CYW43455 = BCM4345C0 chip (B3 patchram
+@@ -491,14 +502,19 @@ tas5806_left: amplifier@2c {
+ 		#sound-dai-cells = <0>;
+ 		/* B4 §8: enable GPIO4_IO16 active-high == PDN (active-low power-down).
+ 		 * tas5805m.c drives pdn logical 0 (physical high = ON) at probe. */
+-		pdn-gpios = <&gpio4 16 GPIO_ACTIVE_LOW>;
++		pdn-gpios = <&gpio4 16 GPIO_ACTIVE_HIGH>;
++		/* D4 fix: vendor DSP table (tweeters, sha 510a1456...) — plain
++		 * {reg,val} pairs + 0xfe delays; send_cfg default path handles. */
++		ti,dsp-config-name = "tweeters";
+ 	};
+ 
+ 	tas5806_right: amplifier@2f {
+ 		compatible = "ti,tas5805m";
+ 		reg = <0x2f>;
+ 		#sound-dai-cells = <0>;
+-		pdn-gpios = <&gpio4 17 GPIO_ACTIVE_LOW>;
++		pdn-gpios = <&gpio4 17 GPIO_ACTIVE_HIGH>;
++		/* D4 fix: vendor DSP table (woofers, sha 6a01cc29...) */
++		ti,dsp-config-name = "woofers";
+ 	};
+ };
+ 
+@@ -557,8 +573,21 @@ &sai1 {
+ 	pinctrl-0 = <&pinctrl_sai1>;
+ 	fsl,sai-mclk-direction-output;
+ 	#sound-dai-cells = <0>;
+-	assigned-clocks = <&clk IMX8MM_AUDIO_PLL2>, <&clk IMX8MM_CLK_SAI1>;
+-	assigned-clock-rates = <786432000>, <49152000>;
++	/* D4 fix (vendor dtbo sai@30010000): full clock spec — bus/mclk1-3
++	 * from dtsi + pll8k/pll11k (AUDIO_PLL1_OUT/PLL2_OUT) so the driver
++	 * can fsl_asoc_reparent_pll_clocks() the root to an audio PLL.
++	 * Without these the root stays on osc_24m and BCLK derive fails
++	 * (the -22 hw_params errors we chased all night). Vendor rates:
++	 * SAI1 root 49.152 MHz (via reparent to pll_out). */
++	clocks = <&clk IMX8MM_CLK_SAI1_IPG>, <&clk IMX8MM_CLK_DUMMY>,
++		 <&clk IMX8MM_CLK_SAI1_ROOT>, <&clk IMX8MM_CLK_DUMMY>,
++		 <&clk IMX8MM_CLK_DUMMY>,
++		 <&clk IMX8MM_AUDIO_PLL1_OUT>, <&clk IMX8MM_AUDIO_PLL2_OUT>;
++	clock-names = "bus", "mclk", "mclk1", "mclk2", "mclk3", "pll8k", "pll11k";
++	fsl,dataline = <0x02 0xff 0xff 0x02 0xff 0xff>;
++	assigned-clocks = <&clk IMX8MM_CLK_SAI1>;
++	assigned-clock-parents = <&clk IMX8MM_AUDIO_PLL1_OUT>;
++	assigned-clock-rates = <49152000>;
+ 	status = "okay";
+ };
+ 
+@@ -568,6 +597,20 @@ &sai5 {
+ 	pinctrl-0 = <&pinctrl_sai5>;
+ 	fsl,sai-asynchronous;
+ 	#sound-dai-cells = <0>;
++	/* D5 fix (vendor dtbo sai@30050000 VERBATIM — same as vendor Android):
++	 * clocks: bus=SAI5_IPG, mclk0=dummy, mclk1=SAI5_ROOT, mclk2/3=dummy,
++	 * pll8k=AUDIO_PLL1_OUT, pll11k=AUDIO_PLL2_OUT.
++	 * dataline <0x00 0x0f 0x0f> = 1 rx line, mask 0xf.
++	 * assigned: SAI5 root -> AUDIO_PLL1_OUT @ 49.152 MHz. */
++	clocks = <&clk IMX8MM_CLK_SAI5_IPG>, <&clk IMX8MM_CLK_DUMMY>,
++		 <&clk IMX8MM_CLK_SAI5_ROOT>, <&clk IMX8MM_CLK_DUMMY>,
++		 <&clk IMX8MM_CLK_DUMMY>,
++		 <&clk IMX8MM_AUDIO_PLL1_OUT>, <&clk IMX8MM_AUDIO_PLL2_OUT>;
++	clock-names = "bus", "mclk0", "mclk1", "mclk2", "mclk3", "pll8k", "pll11k";
++	fsl,dataline = <0x00 0x0f 0x0f>;
++	assigned-clocks = <&clk IMX8MM_CLK_SAI5>;
++	assigned-clock-parents = <&clk IMX8MM_AUDIO_PLL1_OUT>;
++	assigned-clock-rates = <49152000>;
+ 	status = "okay";
+ };
+ 
+diff --git a/sound/soc/codecs/tas5805m.c b/sound/soc/codecs/tas5805m.c
+index 4c32500ee..87e5226c3 100644
+--- a/sound/soc/codecs/tas5805m.c
++++ b/sound/soc/codecs/tas5805m.c
+@@ -274,10 +274,13 @@ static int tas5805m_vol_put(struct snd_kcontrol *kcontrol,
+ 	return ret;
+ }
+ 
+-static const struct snd_kcontrol_new tas5805m_snd_controls[] = {
++/* BENCH-D4 FIX (2026-10-31): per-device kcontrol name template.
++ * Two amps on one card -> duplicate "Master Playback Volume" -> card -EBUSY.
++ * Name is uniquified per device in tas5805m_i2c_probe below. */
++static struct snd_kcontrol_new tas5805m_snd_controls[] = {
+ 	{
+ 		.iface	= SNDRV_CTL_ELEM_IFACE_MIXER,
+-		.name	= "Master Playback Volume",
++		.name	= "Master Playback Volume",	/* overwritten per-probe */
+ 		.access	= SNDRV_CTL_ELEM_ACCESS_TLV_READ |
+ 			  SNDRV_CTL_ELEM_ACCESS_READWRITE,
+ 		.info	= tas5805m_vol_info,
+@@ -285,14 +288,42 @@ static const struct snd_kcontrol_new tas5805m_snd_controls[] = {
+ 		.put	= tas5805m_vol_put,
+ 	},
+ };
++#define TAS5805M_NUM_CONTROLS ARRAY_SIZE(tas5805m_snd_controls)
+ 
++/* BENCH-D4d FIX (2026-10-31): PPC3-meta-aware send_cfg —
++ * 0xfe XX = delay XX ms; 0xfd NN <reg> <data..> = burst (bulk write,
++ * auto-increment within page); 0xf0 NN <text..> = skip comment.
++ * Needed to consume real PPC3 exports (jpvc36/TAS5805m style). */
+ static void send_cfg(struct regmap *rm,
+ 		     const uint8_t *s, unsigned int len)
+ {
+-	unsigned int i;
+-
+-	for (i = 0; i + 1 < len; i += 2)
+-		regmap_write(rm, s[i], s[i + 1]);
++	unsigned int i = 0;
++
++	while (i + 1 < len) {
++		switch (s[i]) {
++		case 0xfe:	/* delay */
++			usleep_range(1000 * s[i + 1],
++				     1000 * s[i + 1] + 1000);
++			i += 2;
++			break;
++		case 0xfd:	/* burst: reg, then cnt-1 data bytes */
++			if (i + 2 >= len)
++				return;
++			regmap_bulk_write(rm, s[i + 2], &s[i + 3],
++					  s[i + 1] - 1);
++			i += 2 + s[i + 1];
++			break;
++		case 0xf0:	/* ascii comment: skip cnt-1 bytes */
++			if (i + 1 >= len)
++				return;
++			i += 1 + s[i + 1];
++			break;
++		default:
++			regmap_write(rm, s[i], s[i + 1]);
++			i += 2;
++			break;
++		}
++	}
+ }
+ 
+ /* The TAS5805M DSP can't be configured until the I2S clock has been
+@@ -441,7 +472,11 @@ static struct snd_soc_dai_driver tas5805m_dai = {
+ 		.channels_min	= 2,
+ 		.channels_max	= 2,
+ 		.rates		= SNDRV_PCM_RATE_48000,
+-		.formats	= SNDRV_PCM_FMTBIT_S32_LE,
++		/* D4 fix (2026-10-31): vendor DSP program expects 16-bit serial
++		 * slots (vendor Android ran S16 streams); S32-only constraint
++		 * mangled samples into noise. Allow both. */
++		.formats	= SNDRV_PCM_FMTBIT_S16_LE |
++				  SNDRV_PCM_FMTBIT_S32_LE,
+ 	},
+ 	.ops		= &tas5805m_dai_ops,
+ };
+@@ -554,11 +589,31 @@ static int tas5805m_i2c_probe(struct i2c_client *i2c)
+ 	INIT_WORK(&tas5805m->work, do_work);
+ 	mutex_init(&tas5805m->lock);
+ 
+-	/* Don't register through devm. We need to be able to unregister
+-	 * the component prior to deasserting PDN#
+-	 */
++	/* BENCH-D4 FIX: unique per-device control name (see header comment) */
++	{
++		struct snd_kcontrol_new *ctrl = &tas5805m_snd_controls[0];
++		static struct snd_soc_component_driver *per_dev_driver[4];
++		static int dev_idx;
++		struct snd_soc_component_driver *drv;
++		int i;
++
++		i = (i2c->addr == 0x2c) ? 0 : 1;
++		drv = devm_kmemdup(dev, &soc_codec_dev_tas5805m,
++				   sizeof(*drv), GFP_KERNEL);
++		drv->controls = devm_kmemdup(dev, tas5805m_snd_controls,
++					    sizeof(tas5805m_snd_controls),
++					    GFP_KERNEL);
++		((struct snd_kcontrol_new *)drv->controls)[0].name =
++			devm_kasprintf(dev, GFP_KERNEL,
++				(i == 0) ? "Master Playback Volume A"
++					 : "Master Playback Volume B");
++		per_dev_driver[i] = drv;
++		ret = snd_soc_register_component(dev, drv, &tas5805m_dai, 1);
++		goto reg_done;
++	}
+ 	ret = snd_soc_register_component(dev, &soc_codec_dev_tas5805m,
+ 					 &tas5805m_dai, 1);
++reg_done:
+ 	if (ret < 0) {
+ 		dev_err(dev, "unable to register codec: %d\n", ret);
+ 		gpiod_set_value(tas5805m->gpio_pdn_n, 0);
+-- 
+2.43.0
+

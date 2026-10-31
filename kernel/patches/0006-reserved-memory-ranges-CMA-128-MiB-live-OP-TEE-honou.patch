@@ -1,0 +1,59 @@
+From 11e9ef218016c0dbf05ffbef89a0d12274fa8cc1 Mon Sep 17 00:00:00 2001
+From: Iftekhar Khaled <samintisardev@gmail.com>
+Date: Sat, 31 Oct 2026 16:34:17 +0000
+Subject: [PATCH 6/6] reserved-memory ranges (CMA 128 MiB live, OP-TEE
+ honoured) + CSI mem cap 32M
+
+imx8mm-mirror.dts: add the mandatory empty `ranges;` to reserved-memory.
+Without it the kernel rejected the whole node ("unsupported node format,
+ignoring"): rpmsg + U-Boot OP-TEE no-map regions were NOT reserved and the
+128 MiB linux,cma node was inert. Now: CMA 128 MiB @0xb0000000 (reusable),
+optee_core 28 MiB + optee_shm 4 MiB + rpmsg 4 MiB nomap. Needed for any
+DRM video output (scan-out buffers could not be allocated from 32 MiB).
+
+imx7-media-csi: IMX7_CSI_VIDEO_MEM_LIMIT 512M -> 32M. ffmpeg requests 256
+buffers, so the camera hub took every CMA buffer it could get and starved
+the display (8 x 1080p UYVY / 3 x 5MP now).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/arm64/boot/dts/freescale/imx8mm-mirror.dts | 6 ++++++
+ drivers/media/platform/nxp/imx7-media-csi.c     | 5 ++++-
+ 2 files changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/freescale/imx8mm-mirror.dts b/arch/arm64/boot/dts/freescale/imx8mm-mirror.dts
+index ee1ded5cc..704b4ca94 100644
+--- a/arch/arm64/boot/dts/freescale/imx8mm-mirror.dts
++++ b/arch/arm64/boot/dts/freescale/imx8mm-mirror.dts
+@@ -199,6 +199,12 @@ codec {
+ 	reserved-memory {
+ 		#address-cells = <2>;
+ 		#size-cells = <2>;
++		/* 2026-10-31: mandatory empty ranges. Without it the kernel rejected
++		 * this WHOLE node ("Reserved memory: unsupported node format,
++		 * ignoring"): rpmsg + U-Boot OP-TEE no-map regions were not honoured
++		 * and the 128 MiB CMA below was inert (video output could not
++		 * allocate scan-out buffers from the 32 MiB default pool). */
++		ranges;
+ 		/* B4 §16: rpmsg@b8000000 4 MiB (kept even though rpmsg is unused —
+ 		 * Trusty/TEE is not loaded in our chain, but reserve to be safe) */
+ 		rpmsg_reserved: rpmsg@b8000000 {
+diff --git a/drivers/media/platform/nxp/imx7-media-csi.c b/drivers/media/platform/nxp/imx7-media-csi.c
+index f52ec6eff..e4dd82f6b 100644
+--- a/drivers/media/platform/nxp/imx7-media-csi.c
++++ b/drivers/media/platform/nxp/imx7-media-csi.c
+@@ -176,7 +176,10 @@
+ 
+ #define IMX7_CSI_VIDEO_NAME		"imx-capture"
+ /* In bytes, per queue */
+-#define IMX7_CSI_VIDEO_MEM_LIMIT	SZ_512M
++/* MIRROR (2026-10-31): was SZ_512M. ffmpeg asks for 256 buffers, so the
++ * camera hub grabbed every CMA buffer it could get and starved the display
++ * (no room for scan-out buffers). 32M = 8 x 1080p UYVY / 3 x 5MP. */
++#define IMX7_CSI_VIDEO_MEM_LIMIT	SZ_32M
+ #define IMX7_CSI_VIDEO_EOF_TIMEOUT	2000
+ 
+ #define IMX7_CSI_DEF_MBUS_CODE		MEDIA_BUS_FMT_UYVY8_2X8
+-- 
+2.43.0
+

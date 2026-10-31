@@ -1,0 +1,11 @@
+[Unit]
+Description=Mirror camera hub: /dev/video0 (1080p30) -> shared virtual camera /dev/video10
+After=systemd-modules-load.service
+Wants=systemd-modules-load.service
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/camhub.sh
+Restart=always
+RestartSec=3
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,13 @@
+[Unit]
+Description=Mirror camera HTTP MJPEG server on port %i (reads shared /dev/video10)
+After=camhub.service
+Wants=camhub.service
+[Service]
+Type=simple
+EnvironmentFile=/etc/default/camhttp-%i
+ExecStart=/usr/bin/python3 /usr/local/sbin/camhttp.py %i $DEFAULT_RES $DEFAULT_FPS
+Restart=always
+RestartSec=2
+Nice=10
+[Install]
+WantedBy=multi-user.target

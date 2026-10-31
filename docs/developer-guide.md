@@ -1,0 +1,111 @@
+# Developer guide: building apps on the mirror
+
+Once the system is up, the speakers, mic, camera and display are standard Linux interfaces. This is
+how to use them, with the quirks that matter. Hardware details are in
+[hardware-reference.md](hardware-reference.md).
+
+## Audio out (speakers)
+Play through the ALSA **`default`** device — the overlay wires it to a `dmix` so multiple apps mix:
+```sh
+aplay clip.wav
+ffmpeg -i track.mp3 -f alsa default
+```
+```python
+import subprocess, math, struct
+rate = 48000
+pcm = b''.join(struct.pack('<hh', s, s) for s in
+               (int(6000*math.sin(2*math.pi*660*i/rate)) for i in range(rate)))
+subprocess.run(['aplay','-q','-D','default','-t','raw','-f','S16_LE','-r',str(rate),'-c','2'],
+               input=pcm, check=True)
+```
+- **Volume** is a hardware mixer: `amixer -c0 cset name='Master Playback Volume A' 92,92` (and `…B`).
+  dB = index − 110; **max is 98 (−12 dB)** — above that the left amp over-current-trips. Default 92
+  (−18 dB). `alsactl store 0` to persist.
+- **First sound after boot** loses ~1.3 s while the amps load their DSP program (once per boot). Hide
+  it by playing ~2 s of silence at app start.
+
+## Audio in (mic)
+Record through `default` (or the `mic` alias). Any rate; `plug` converts:
+```sh
+arecord -f S16_LE -r 16000 -c 1 -d 5 out.wav      # 16 kHz mono is typical for speech
+```
+Quiet signal, so a `+20 dB` softvol ("Mic Capture Volume") is applied. Treat it as **mono** (channel
+0). Full-duplex (play + record together) works.
+
+## Camera — shared by many apps
+Open **`/dev/video10`** (not `/dev/video0`, which the hub owns). It's a normal V4L2 webcam:
+**1920×1080, UYVY, 30 fps**, and any number of processes can read it at once, each getting every
+frame. The format is fixed; resize/rotate/drop frames in your own process.
+
+**Orientation:** rotate **90° CCW** for upright (`cv2.ROTATE_90_COUNTERCLOCKWISE`, ffmpeg
+`transpose=2`); for a selfie view also mirror horizontally.
+
+OpenCV (install headless in a venv to keep it small):
+```python
+import cv2
+cap = cv2.VideoCapture("/dev/video10", cv2.CAP_V4L2)
+while True:
+    if not cap.grab(): break            # grab() is cheap (~1% of a core at 30 fps)
+    ok, frame = cap.retrieve()          # decode only the frames you use
+    if not ok: break
+    small = cv2.resize(frame, (640, 360), interpolation=cv2.INTER_LINEAR)
+    upright = cv2.rotate(small, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    # run your model on `upright`
+```
+ffmpeg pipe (any language): decode + scale + rotate in ffmpeg, read fixed-size frames from stdout:
+```sh
+ffmpeg -f v4l2 -input_format uyvy422 -video_size 1920x1080 -i /dev/video10 \
+  -vf "fps=10,scale=640:360:flags=fast_bilinear,transpose=2" -pix_fmt rgb24 -f rawvideo -
+```
+**CPU rules of thumb** (GC600-class board): `grab()` ≈ 1% of a core; full-1080p BGR `read()` ≈ 60%;
+`cv2.resize` with `INTER_LINEAR` (2.3 ms) is ~6× cheaper than `INTER_AREA` (13.6 ms) on full frames.
+Four raw readers at 30 fps cost ~5% of the board total — the *sharing* is nearly free; the cost is
+what each app does with pixels. There is **no hardware video encoder**, so encoding (MJPEG/H.264) is
+pure CPU.
+
+**Exposure:** in a dim room the sensor runs at max exposure, so fast motion blurs (rolling-shutter
+slant too). It doesn't affect presence/gesture models (they still get every frame); add light or cap
+exposure on the `ov5640` sub-device for crisp fast motion.
+
+## Display
+- Draw to **`/dev/fb0`** (1920×1080, BGRX) or via DRM/KMS. **Use the stable device path**
+  `/dev/dri/by-path/platform-32e00000.lcdif-card` — the `cardN` numbers swap between boots.
+- **Rotate 90° CCW:** design portrait (1080×1920), rotate into the 1920×1080 framebuffer. The panel
+  is mounted sideways.
+- **Safe area:** the bezel hides the outer edge; keep content **≥20 px** from every edge (≥50 px for
+  text/buttons).
+- **Backlight:** `/sys/class/backlight/backlight/brightness`, 0–100, 0 = off. Boots dark; `screenon
+  [N]` / `screenoff`. Independent of the display driver — draw first, then light up.
+- GPU is **OpenGL ES 2.0 only** (Vivante GC600). Request GLES2 explicitly in any toolkit. Scan-out
+  buffers must be **XRGB (no alpha)**.
+
+## Suggested architecture for a gesture-driven mirror UI
+The device is well-suited to: UI screens on the panel + a camera model that detects gestures/presence
+and drives the UI. This avoids the one weak spot (smooth full-motion video on the panel is slow).
+
+```
+camera → /dev/video10 ─┬─▶ gesture/presence model (own process, 10–15 fps, small frames)
+                       │        │ events: swipe_left, person_present, …
+                       │        ▼
+                       │   UI process (KMS + OpenGL ES 2, portrait 1080×1920 rotated 90° CCW)
+                       └─▶ (optional) other models
+speakers/mic via ALSA default (chimes, TTS, voice)
+```
+- Each part is cheap: the camera hub costs ~8–10% of one core always; a 10 fps model preprocessor
+  ~35–40% of a core; a swipe animation just slides already-drawn textures.
+- Pick a UI toolkit with a **DRM/KMS + GLES2** backend (Qt eglfs, SDL kmsdrm, flutter-pi, or a small
+  EGL/GBM app). No X11/Wayland is installed or needed.
+- Pre-render screens to textures; animate by moving textures, not re-rendering per frame.
+
+## Platform behaviour
+- **Boot:** fully unattended from power — kernel + userspace reach `graphical.target` in ~8–9 s; WiFi
+  up and SSH reachable ~30–60 s after power-on. Boots with the screen dark.
+- **Network:** NetworkManager autoconnects WiFi (DHCP, no static IP, no mDNS — find it via your
+  router). SSH: root over `scp -O` (no sftp subsystem).
+- **Services at boot:** `screen-off` (backlight 0), `camhub` (camera), ALSA restore, timesyncd (NTP;
+  no RTC, so the clock is wrong until it syncs), NetworkManager, ssh.
+- **Time:** wait for `timedatectl show -p NTPSynchronized --value` = `yes` before trusting timestamps.
+- **Reboot:** `reboot` over SSH hangs — use `sync; poweroff` then power-cycle.
+- **Video playback** on the panel is not smooth (HW decode works ~24 fps, but the decode→display path
+  is the bottleneck). Fine as a UI device; not a media player.
+- `/tmp` is RAM and wiped on boot.

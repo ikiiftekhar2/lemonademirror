@@ -1,0 +1,11 @@
+# never commit real secrets or extracted vendor blobs
+*.nmconnection
+rootfs/overlay/lib/firmware/
+**/auth.json
+*.stock.img
+mmcblk2*.img
+boot0.img
+boot1.img
+vendor_a.img
+vmlinux
+.DS_Store

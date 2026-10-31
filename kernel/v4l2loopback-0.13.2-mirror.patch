@@ -1,0 +1,182 @@
+diff --git a/v4l2loopback.c b/v4l2loopback.c
+index 25cb1be..13efe8d 100644
+--- a/v4l2loopback.c
++++ b/v4l2loopback.c
+@@ -41,6 +41,15 @@
+ #define strscpy strlcpy
+ #endif
+ 
++/* MIRROR (2026-10-31): 6.18 compat shims ported from upstream main; keeps 0.13.x
++ * multi-reader semantics (0.14+/0.15 allow only ONE streaming capture owner). */
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 16, 0) && !defined(from_timer)
++#define from_timer(var, callback_timer, timer_fieldname) \
++	timer_container_of(var, callback_timer, timer_fieldname)
++#endif
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 2, 0)
++#define del_timer_sync timer_delete_sync
++#endif
+ #if defined(timer_setup) && defined(from_timer)
+ #define HAVE_TIMER_SETUP
+ #endif
+@@ -305,7 +314,7 @@ struct v4l2loopback_private {
+ struct v4l2l_buffer {
+ 	struct v4l2_buffer buffer;
+ 	struct list_head list_head;
+-	int use_count;
++	atomic_t use_count; /* MIRROR: atomic -- vm_open/close race across reader processes */
+ };
+ 
+ struct v4l2_loopback_device {
+@@ -619,10 +628,11 @@ static int inner_try_setfmt(struct file *file, struct v4l2_format *fmt)
+ 	if (V4L2LOOPBACK_IS_FIXED_FMT(dev)) {
+ 		fmt->fmt.pix = dev->pix_format;
+ 		if (needschange) {
+-			if (dev->active_readers > 0 && capture) {
+-				/* cannot call fmt_cap while there are readers */
+-				return -EBUSY;
+-			}
++			/* MIRROR (2026-10-31): capture side: the format is fixed by
++			 * the writer, so S_FMT just reports it back (standard V4L2
++			 * "adjust" semantics, same as with no readers) instead of
++			 * EBUSY -- lets ffmpeg/OpenCV probe-and-join while others
++			 * are already streaming. */
+ 			if (dev->ready_for_capture > 0 && !capture) {
+ 				/* cannot call fmt_out while there are writers */
+ 				return -EBUSY;
+@@ -1568,7 +1578,7 @@ static int vidioc_reqbufs(struct file *file, void *fh,
+ 	MARK();
+ 
+ 	dev = v4l2loopback_getdevice(file);
+-	opener = fh_to_opener(fh);
++	opener = fh_to_opener(file->private_data);
+ 
+ 	dprintk("reqbufs: %d\t%d=%d\n", b->memory, b->count,
+ 		dev->buffers_number);
+@@ -1585,7 +1595,11 @@ static int vidioc_reqbufs(struct file *file, void *fh,
+ 		return -EBUSY;
+ 	}
+ 
+-	init_buffers(dev);
++	/* MIRROR (2026-10-31): the ring is shared by the writer and ALL
++	 * readers; re-initialising it on every REQBUFS (incl. a leaving
++	 * reader's REQBUFS(0)) wiped buffer state under everyone else. */
++	if (!dev->ready_for_capture && !dev->active_readers)
++		init_buffers(dev);
+ 	switch (b->memory) {
+ 	case V4L2_MEMORY_MMAP:
+ 		/* do nothing here, buffers are always allocated */
+@@ -1652,7 +1666,7 @@ static int vidioc_querybuf(struct file *file, void *fh, struct v4l2_buffer *b)
+ 	type = b->type;
+ 	index = b->index;
+ 	dev = v4l2loopback_getdevice(file);
+-	opener = fh_to_opener(fh);
++	opener = fh_to_opener(file->private_data);
+ 
+ 	if ((b->type != V4L2_BUF_TYPE_VIDEO_CAPTURE) &&
+ 	    (b->type != V4L2_BUF_TYPE_VIDEO_OUTPUT)) {
+@@ -1710,7 +1724,7 @@ static int vidioc_qbuf(struct file *file, void *fh, struct v4l2_buffer *buf)
+ 	int index;
+ 
+ 	dev = v4l2loopback_getdevice(file);
+-	opener = fh_to_opener(fh);
++	opener = fh_to_opener(file->private_data);
+ 
+ 	if (buf->index > max_buffers)
+ 		return -EINVAL;
+@@ -1850,7 +1864,7 @@ static int vidioc_dqbuf(struct file *file, void *fh, struct v4l2_buffer *buf)
+ 	struct v4l2l_buffer *b;
+ 
+ 	dev = v4l2loopback_getdevice(file);
+-	opener = fh_to_opener(fh);
++	opener = fh_to_opener(file->private_data);
+ 	if (opener->timeout_image_io) {
+ 		*buf = dev->timeout_image_buffer.buffer;
+ 		return 0;
+@@ -1863,11 +1877,12 @@ static int vidioc_dqbuf(struct file *file, void *fh, struct v4l2_buffer *buf)
+ 			return index;
+ 		dprintkrw("capture DQBUF pos: %lld index: %d\n",
+ 			  (long long)(opener->read_position - 1), index);
++		/* MIRROR (2026-10-31): with many concurrent readers the shared
++		 * per-buffer MAPPED flag cannot describe THIS opener's mapping
++		 * (one reader unmapping must not fail the others' DQBUF). */
+ 		if (!(dev->buffers[index].buffer.flags &
+-		      V4L2_BUF_FLAG_MAPPED)) {
+-			dprintk("trying to return not mapped buf[%d]\n", index);
+-			return -EINVAL;
+-		}
++		      V4L2_BUF_FLAG_MAPPED))
++			dprintk("dqbuf of buf[%d] not flagged mapped (shared ring), continuing\n", index);
+ 		unset_flags(&dev->buffers[index]);
+ 		*buf = dev->buffers[index].buffer;
+ 		dprintkrw(
+@@ -1913,7 +1928,7 @@ static int vidioc_streamon(struct file *file, void *fh, enum v4l2_buf_type type)
+ 	MARK();
+ 
+ 	dev = v4l2loopback_getdevice(file);
+-	opener = fh_to_opener(fh);
++	opener = fh_to_opener(file->private_data);
+ 
+ 	switch (type) {
+ 	case V4L2_BUF_TYPE_VIDEO_OUTPUT:
+@@ -1929,8 +1944,12 @@ static int vidioc_streamon(struct file *file, void *fh, enum v4l2_buf_type type)
+ 	case V4L2_BUF_TYPE_VIDEO_CAPTURE:
+ 		if (!dev->ready_for_capture)
+ 			return -EIO;
+-		if (dev->active_readers > 0)
+-			return -EBUSY;
++		/* MIRROR (2026-10-31): allow MANY concurrent streaming readers
++		 * (camera fan-out). Each opener already has its own
++		 * read_position into the shared ring; the upstream single-reader
++		 * EBUSY here was policy, not a data-path limit. */
++		if (opener->type == READER)
++			return 0;	/* repeated STREAMON: keep count exact */
+ 		opener->type = READER;
+ 		dev->active_readers++;
+ 		client_usage_queue_event(dev->vdev);
+@@ -1954,7 +1973,7 @@ static int vidioc_streamoff(struct file *file, void *fh,
+ 	dprintk("%d\n", type);
+ 
+ 	dev = v4l2loopback_getdevice(file);
+-	opener = fh_to_opener(fh);
++	opener = fh_to_opener(file->private_data);
+ 	switch (type) {
+ 	case V4L2_BUF_TYPE_VIDEO_OUTPUT:
+ 		if (dev->ready_for_capture > 0)
+@@ -2053,7 +2072,7 @@ static void vm_open(struct vm_area_struct *vma)
+ 	MARK();
+ 
+ 	buf = vma->vm_private_data;
+-	buf->use_count++;
++	atomic_inc(&buf->use_count);
+ 
+ 	buf->buffer.flags |= V4L2_BUF_FLAG_MAPPED;
+ }
+@@ -2064,9 +2083,7 @@ static void vm_close(struct vm_area_struct *vma)
+ 	MARK();
+ 
+ 	buf = vma->vm_private_data;
+-	buf->use_count--;
+-
+-	if (buf->use_count <= 0)
++	if (atomic_dec_return(&buf->use_count) <= 0)
+ 		buf->buffer.flags &= ~V4L2_BUF_FLAG_MAPPED;
+ }
+ 
+@@ -2232,7 +2249,7 @@ static int v4l2_loopback_open(struct file *file)
+ 	v4l2_fh_init(&opener->fh, video_devdata(file));
+ 	file->private_data = &opener->fh;
+ 
+-	v4l2_fh_add(&opener->fh);
++	v4l2_fh_add(&opener->fh, file);
+ 	dprintk("opened dev:%p with image:%p\n", dev, dev ? dev->image : NULL);
+ 	MARK();
+ 	return 0;
+@@ -2260,7 +2277,7 @@ static int v4l2_loopback_close(struct file *file)
+ 	}
+ 	try_free_buffers(dev);
+ 
+-	v4l2_fh_del(&opener->fh);
++	v4l2_fh_del(&opener->fh, file);
+ 	v4l2_fh_exit(&opener->fh);
+ 
+ 	kfree(opener);

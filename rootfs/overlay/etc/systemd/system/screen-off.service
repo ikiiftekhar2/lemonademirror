@@ -1,0 +1,10 @@
+[Unit]
+Description=Screen off at boot (appliance default)
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'echo 0 > /sys/class/backlight/backlight/brightness'
+
+[Install]
+WantedBy=multi-user.target

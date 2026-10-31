@@ -1,0 +1,67 @@
+From 258b7624d250e57afd5586287468b2638d0a8581 Mon Sep 17 00:00:00 2001
+From: Iftekhar Khaled <samintisardev@gmail.com>
+Date: Sat, 31 Oct 2026 15:47:23 +0000
+Subject: [PATCH 5/6] D10 camera hub: cached CSI buffers + 128 MiB reusable CMA
+
+imx7-media-csi: queue_setup opts the vb2 queue into non-coherent (cached)
+buffers. Coherent dma-contig memory is uncached on i.MX8MM: a 1:1 CPU copy
+of 1080p30 pinned a whole core and only made 15 fps; now ~8% of one core
+at 30 fps. vb2 still syncs every buffer on prepare/finish.
+
+imx8mm-mirror.dts: linux,cma reusable 128 MiB (was CONFIG 32 MiB; 1080p
+capture left ~2 MiB free, 5 MP capture failed).
+
+Fan-out to apps via out-of-tree v4l2loopback 0.13.2 + mirror patch
+(multi-reader, atomic mmap refcount, 6.18 shims), kept outside this tree.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/arm64/boot/dts/freescale/imx8mm-mirror.dts | 10 ++++++++++
+ drivers/media/platform/nxp/imx7-media-csi.c     | 10 ++++++++++
+ 2 files changed, 20 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/freescale/imx8mm-mirror.dts b/arch/arm64/boot/dts/freescale/imx8mm-mirror.dts
+index 5ed1c0534..ee1ded5cc 100644
+--- a/arch/arm64/boot/dts/freescale/imx8mm-mirror.dts
++++ b/arch/arm64/boot/dts/freescale/imx8mm-mirror.dts
+@@ -205,6 +205,16 @@ rpmsg_reserved: rpmsg@b8000000 {
+ 			no-map;
+ 			reg = <0 0xb8000000 0 0x400000>;
+ 		};
++
++		/* D10 camera hub (2026-10-31): default CMA 32 MiB -> 128 MiB. 1080p
++		 * capture left ~2 MiB free (5 MP failed outright). "reusable" =
++		 * movable pages (normal/ML memory) may use it when idle. */
++		linux,cma {
++			compatible = "shared-dma-pool";
++			reusable;
++			size = <0 0x8000000>;
++			linux,cma-default;
++		};
+ 	};
+ };
+ 
+diff --git a/drivers/media/platform/nxp/imx7-media-csi.c b/drivers/media/platform/nxp/imx7-media-csi.c
+index 34a92642b..f52ec6eff 100644
+--- a/drivers/media/platform/nxp/imx7-media-csi.c
++++ b/drivers/media/platform/nxp/imx7-media-csi.c
+@@ -1284,6 +1284,16 @@ static int imx7_csi_video_queue_setup(struct vb2_queue *vq,
+ 	*nplanes = 1;
+ 	sizes[0] = pix->sizeimage;
+ 
++	/*
++	 * MIRROR D10 (2026-10-31): cacheable capture buffers. Coherent
++	 * dma-contig memory is mapped uncached on i.MX8MM, so any CPU read
++	 * of a frame (fan-out to v4l2loopback, OpenCV, ffmpeg) crawled:
++	 * a 1:1 copy of 1080p30 pinned a whole core and only made 15 fps.
++	 * vb2 still syncs every buffer on prepare/finish (DMA_FROM_DEVICE).
++	 * set_queue_coherency() runs before queue_setup(), so this sticks.
++	 */
++	vq->non_coherent_mem = 1;
++
+ 	return 0;
+ }
+ 
+-- 
+2.43.0
+

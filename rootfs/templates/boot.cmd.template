@@ -1,0 +1,12 @@
+# U-Boot boot script source for LemonadeMirror.
+# Compile to boot.scr with scripts/make-bootscr.sh <ROOTFS_PARTUUID>
+# (replaces @@ROOTFS_PARTUUID@@ and runs mkimage).
+#
+# fbcon=rotate:3 pre-rotates the kernel console 90deg CCW for the sideways panel.
+setenv kernel_addr 0x40480000
+setenv fdt_addr    0x44480000
+setenv bootargs "console=ttymxc1,115200 root=PARTUUID=@@ROOTFS_PARTUUID@@ rw rootwait fbcon=rotate:3"
+mmc dev 2
+fatload mmc 2:4 ${kernel_addr} /Image
+fatload mmc 2:4 ${fdt_addr} /imx8mm-mirror.dtb
+booti ${kernel_addr} - ${fdt_addr}

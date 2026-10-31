@@ -1,0 +1,108 @@
+From 01c82403bb5cfcbf89d4d17a30ed56c0bfc5f45c Mon Sep 17 00:00:00 2001
+From: Iftekhar Khaled <samintisardev@gmail.com>
+Date: Sat, 31 Oct 2026 15:05:15 +0000
+Subject: [PATCH 4/6] D4/D5 audio: speakers clean + mic capture working
+
+tas5805m (module-only, vermagic 6.18.60-dirty):
+- D4-loadonce: download the DSP table once (vendor tas5806_init_dsp_work
+  semantics); re-sending 1631 writes per TRIGGER_START cost ~1.3 s and
+  swallowed the start of every sound.
+- warm start: 5 ms clock settle, refresh, then clear latched faults
+  (0x78=0x80, vendor table tail / fault_check_work) with clocks running.
+- D4-volcap: TAS5805M_VOLUME_MAX 98 (-12 dB). Full-scale content trips the
+  0x2c amp into OC at -6 dB with the vendor DSP program; upstream max
+  158 = +48 dB was the "distortion".
+
+imx8mm-mirror.dts:
+- D5: &sai5 fsl,sai-mclk-direction-output. With MCR.MOE=0 SAI5 takes MCLK1
+  from the undriven pad, the RX clock generator never runs, arecord EIO.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../boot/dts/freescale/imx8mm-mirror.dts      |  5 +++
+ sound/soc/codecs/tas5805m.c                   | 36 ++++++++++++++++---
+ 2 files changed, 36 insertions(+), 5 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/freescale/imx8mm-mirror.dts b/arch/arm64/boot/dts/freescale/imx8mm-mirror.dts
+index 937a1fec0..5ed1c0534 100644
+--- a/arch/arm64/boot/dts/freescale/imx8mm-mirror.dts
++++ b/arch/arm64/boot/dts/freescale/imx8mm-mirror.dts
+@@ -608,6 +608,11 @@ &sai5 {
+ 		 <&clk IMX8MM_AUDIO_PLL1_OUT>, <&clk IMX8MM_AUDIO_PLL2_OUT>;
+ 	clock-names = "bus", "mclk0", "mclk1", "mclk2", "mclk3", "pll8k", "pll11k";
+ 	fsl,dataline = <0x00 0x0f 0x0f>;
++	/* D5 FIX (2026-10-31): MCR.MOE=1. With MOE=0 this SAI takes MCLK1
++	 * from the (undriven) SAI5_MCLK pad -> RX clock generator never runs
++	 * (RCSR WSF=0, no DMA, arecord EIO after 1.1x buffer time). Proven
++	 * live by poking MCR bit30: frames + DMA + clean voice capture. */
++	fsl,sai-mclk-direction-output;
+ 	assigned-clocks = <&clk IMX8MM_CLK_SAI5>;
+ 	assigned-clock-parents = <&clk IMX8MM_AUDIO_PLL1_OUT>;
+ 	assigned-clock-rates = <49152000>;
+diff --git a/sound/soc/codecs/tas5805m.c b/sound/soc/codecs/tas5805m.c
+index 87e5226c3..2177a9a0e 100644
+--- a/sound/soc/codecs/tas5805m.c
++++ b/sound/soc/codecs/tas5805m.c
+@@ -150,7 +150,13 @@ static const uint32_t tas5805m_volume[] = {
+ 	0x7D982575, /* 158,   48dB */
+ };
+ 
+-#define TAS5805M_VOLUME_MAX	((int)ARRAY_SIZE(tas5805m_volume) - 1)
++/* D4-volcap (2026-10-31): mirror board limit. With the vendor DSP programs
++ * at unity, full-scale content trips the 0x2c amp into OC (CHAN_FAULT=0x02)
++ * at index 104 (-6 dB); 101 (-9 dB) measured clean on full-scale pink noise,
++ * 80 Hz sine and speech. Cap at 98 (-12 dB) for margin. Upstream max is
++ * 158 (+48 dB), which clips/trips on any real content here.
++ */
++#define TAS5805M_VOLUME_MAX	98
+ #define TAS5805M_VOLUME_MIN	0
+ 
+ struct tas5805m_priv {
+@@ -166,6 +172,7 @@ struct tas5805m_priv {
+ 	int				vol[2];
+ 	bool				is_powered;
+ 	bool				is_muted;
++	bool				dsp_loaded;	/* D4-loadonce */
+ 
+ 	struct work_struct		work;
+ 	struct mutex			lock;
+@@ -371,13 +378,32 @@ static void do_work(struct work_struct *work)
+ 	 * delay after the first set of register writes to
+ 	 * allow the DSP to boot before configuring it.
+ 	 */
+-	usleep_range(5000, 10000);
+-	send_cfg(rm, dsp_cfg_preboot, ARRAY_SIZE(dsp_cfg_preboot));
+-	usleep_range(5000, 15000);
+-	send_cfg(rm, tas5805m->dsp_cfg_data, tas5805m->dsp_cfg_len);
++	/* D4-loadonce (2026-10-31): vendor tas5806_init_dsp_work loads the
++	 * DSP program once (priv->dsp_loaded) and never again. Re-sending the
++	 * 1631-write table on every TRIGGER_START took ~1.3 s and swallowed
++	 * the start of every stream. Later streams only need the refresh
++	 * (HIZ -> PLAY + volume) below.
++	 */
++	if (!tas5805m->dsp_loaded) {
++		usleep_range(5000, 10000);
++		send_cfg(rm, dsp_cfg_preboot, ARRAY_SIZE(dsp_cfg_preboot));
++		usleep_range(5000, 15000);
++		send_cfg(rm, tas5805m->dsp_cfg_data, tas5805m->dsp_cfg_len);
++		tas5805m->dsp_loaded = true;
++	} else {
++		/* warm start: let I2S clock settle before leaving HIZ */
++		usleep_range(5000, 10000);
++	}
+ 
+ 	tas5805m->is_powered = true;
+ 	tas5805m_refresh(tas5805m);
++
++	/* Clear latched faults with the clock running (vendor table tail and
++	 * vendor fault_check_work both write 0x78=0x80). Without this the 0x2c
++	 * amp intermittently stays latched in CHAN_FAULT=0x02 (OC) after a
++	 * clock stop/start and never reaches PLAY. refresh() left book0/page0.
++	 */
++	regmap_write(rm, REG_FAULT, 0x80);
+ 	mutex_unlock(&tas5805m->lock);
+ }
+ 
+-- 
+2.43.0
+

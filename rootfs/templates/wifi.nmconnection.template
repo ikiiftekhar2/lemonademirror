@@ -1,0 +1,28 @@
+# NetworkManager keyfile — copy to
+#   /etc/NetworkManager/system-connections/mirror-wifi.nmconnection
+# replace YOUR_WIFI_SSID / YOUR_WIFI_PASSWORD, then: chmod 600
+#
+# Notes:
+#  - 2.4 GHz was used on the reference unit; the chip does 5 GHz too.
+#  - autoconnect + priority make this the connection NetworkManager brings up at boot.
+
+[connection]
+id=mirror-wifi
+type=wifi
+interface-name=wlan0
+autoconnect=true
+autoconnect-priority=100
+
+[wifi]
+mode=infrastructure
+ssid=YOUR_WIFI_SSID
+
+[wifi-security]
+key-mgmt=wpa-psk
+psk=YOUR_WIFI_PASSWORD
+
+[ipv4]
+method=auto
+
+[ipv6]
+method=auto
