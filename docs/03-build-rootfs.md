@@ -63,4 +63,16 @@ sudo mkfs.ext4 -d rootfs mirror-rootfs.img 5G
 This image goes onto the eMMC in the next step. **Note the partition's PARTUUID after you write it** —
 you'll put it in the boot script.
 
+## After first boot — change your credentials
+The WiFi PSK and root password are **baked into the rootfs image** at build time. If you reuse a
+prebuilt/shared image (or just want to rotate them), change them once you're in over SSH:
+```sh
+nmcli connection modify mirror-wifi wifi-sec.psk 'NEW_WIFI_PASSWORD'   # or set a new SSID/connection
+passwd root                                                           # new root password
+# optional hardening: install your SSH key, then disable password login
+#   sshd_config: PasswordAuthentication no  /  PermitRootLogin prohibit-password
+```
+**Never publish or share a rootfs image with your real WiFi PSK or password in it** — that's exactly
+why this repo ships a template, not an image.
+
 Next: [flash and make it persistent](04-flash-and-persist.md).

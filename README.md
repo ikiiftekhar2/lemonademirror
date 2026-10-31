@@ -116,6 +116,10 @@ that are specific to *you* and can't be shipped:
 Then flash per [docs/04](docs/04-flash-and-persist.md). Verify the binaries first with
 `sha256sum -c prebuilt/SHA256SUMS`.
 
+> After first boot, **change the WiFi and root password baked into your rootfs** to your own
+> (`nmcli` / `passwd` over SSH), and never share a rootfs image that still has your credentials in it.
+> See [docs/03](docs/03-build-rootfs.md#after-first-boot--change-your-credentials).
+
 > Different revision? Don't flash a mismatched dtb/kernel — build from [`kernel/`](kernel/) instead
 > ([docs/02](docs/02-build-kernel.md)). If something's different on your unit, a PR or issue noting
 > what matches and what doesn't is very welcome.
