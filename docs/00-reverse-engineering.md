@@ -5,6 +5,13 @@ peripheral drivers (amps, mic machine driver, camera, the DSI→LVDS bridge conf
 **built-in drivers compiled into that vendor kernel** or as **data inside the vendor device-tree
 overlays**. None of it is in mainline Linux in the exact form this board needs.
 
+> **A note before the specifics.** The exact symbol addresses, register offsets, table sizes and even
+> the firmware build you find on *your* unit will almost certainly differ from what's written here —
+> vendors rev their software and swap components. **Don't get hung up on matching my numbers; match
+> the logic.** The method is what generalizes: **dump the firmware → run it through REA / Ghidra →
+> understand how the vendor's platform works → rebuild that understanding against mainline → port
+> it.** Treat the specific values in these docs as a worked example, not gospel.
+
 **For the most part, this one methodology carried the whole port** — the loop below is what got
 display, audio, mic and camera working. A lot of the reverse-engineering legwork (loading the vendor
 kernel, cross-referencing symbols, pulling data out of the binary, diffing versions) was done with

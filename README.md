@@ -87,6 +87,11 @@ See **[docs/STATUS.md](docs/STATUS.md)** for the full table with verification no
 Then apply the overlay in `rootfs/overlay/` (services, ALSA config, camera hub, helper scripts) and
 you have the system this repo describes.
 
+> **Your unit's details will differ from mine** — firmware builds and components change, so exact
+> addresses/offsets/tables won't match. That's fine; the **logic** is what carries over: dump the
+> firmware, run it through **REA / Ghidra**, figure out how the vendor's platform works, rebuild that
+> on mainline, and port it. See [the reverse-engineering method](docs/00-reverse-engineering.md).
+
 For writing apps on top (speakers, mic, camera, display, suggested gesture-UI architecture), see the
 **[developer guide](docs/developer-guide.md)**.
 
