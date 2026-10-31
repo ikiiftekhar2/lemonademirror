@@ -95,6 +95,31 @@ you have the system this repo describes.
 For writing apps on top (speakers, mic, camera, display, suggested gesture-UI architecture), see the
 **[developer guide](docs/developer-guide.md)**.
 
+## Shortcut: flash my prebuilt binaries
+
+If your board is the **same revision as mine** (`cat /proc/device-tree/model` →
+`lululemon Mirror V1.1`, i.MX8M Mini), you can skip building the kernel entirely and use the
+known-good binaries in **[`prebuilt/`](prebuilt/)** — the exact kernel, device tree and modules
+running on my unit:
+
+| File | What |
+|---|---|
+| `prebuilt/Image` | the kernel (`vermagic 6.18.60-dirty`) |
+| `prebuilt/imx8mm-mirror.dtb` | the device tree |
+| `prebuilt/modules-6.18.60-dirty.tar.gz` | matching modules — untar into `<rootfs>/lib/modules/` |
+
+Use `Image` + the modules **as a set** (the versions must match). You still provide the two things
+that are specific to *you* and can't be shipped:
+1. a **Debian rootfs** with your WiFi/SSH ([docs/03](docs/03-build-rootfs.md)), and
+2. the **vendor firmware blobs** extracted from your own backup ([docs/05](docs/05-extract-vendor-blobs.md)).
+
+Then flash per [docs/04](docs/04-flash-and-persist.md). Verify the binaries first with
+`sha256sum -c prebuilt/SHA256SUMS`.
+
+> Different revision? Don't flash a mismatched dtb/kernel — build from [`kernel/`](kernel/) instead
+> ([docs/02](docs/02-build-kernel.md)). If something's different on your unit, a PR or issue noting
+> what matches and what doesn't is very welcome.
+
 ---
 
 ## Repo layout
