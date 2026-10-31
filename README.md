@@ -116,7 +116,7 @@ that are specific to *you* and can't be shipped:
 Then flash per [docs/04](docs/04-flash-and-persist.md). Verify the binaries first with
 `sha256sum -c prebuilt/SHA256SUMS`.
 
-> After first boot, **change the WiFi and root password baked into your rootfs** to your own
+> After first boot, **change the WiFi password baked into your rootfs**, and use a non-root SSH key login (not root+password)
 > (`nmcli` / `passwd` over SSH), and never share a rootfs image that still has your credentials in it.
 > See [docs/03](docs/03-build-rootfs.md#after-first-boot--change-your-credentials).
 

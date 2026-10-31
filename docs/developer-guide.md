@@ -101,7 +101,7 @@ speakers/mic via ALSA default (chimes, TTS, voice)
 - **Boot:** fully unattended from power — kernel + userspace reach `graphical.target` in ~8–9 s; WiFi
   up and SSH reachable ~30–60 s after power-on. Boots with the screen dark.
 - **Network:** NetworkManager autoconnects WiFi (DHCP, no static IP, no mDNS — find it via your
-  router). SSH: root over `scp -O` (no sftp subsystem).
+  router). SSH: log in as a non-root sudo user with an SSH key (see docs/03); `scp -O` (no sftp subsystem).
 - **Services at boot:** `screen-off` (backlight 0), `camhub` (camera), ALSA restore, timesyncd (NTP;
   no RTC, so the clock is wrong until it syncs), NetworkManager, ssh.
 - **Time:** wait for `timedatectl show -p NTPSynchronized --value` = `yes` before trusting timestamps.

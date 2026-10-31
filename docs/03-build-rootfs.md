@@ -36,14 +36,35 @@ sudoedit rootfs/etc/NetworkManager/system-connections/mirror-wifi.nmconnection  
 sudo chmod 600 rootfs/etc/NetworkManager/system-connections/mirror-wifi.nmconnection
 ```
 
-## 4. SSH
-`openssh-server` is enabled above. For headless first contact you can allow root password login:
+## 4. SSH access (do this the safe way)
+
+This device sits on your network, so **don't leave root-with-a-password reachable over SSH.** The
+recommended setup is a normal sudo user authenticated by an SSH **key**, with root login and password
+auth turned off. Preseed it so it's safe from the very first boot:
+
 ```sh
-echo 'PermitRootLogin yes' | sudo tee rootfs/etc/ssh/sshd_config.d/10-mirror.conf
+sudo chroot rootfs /bin/bash
+  adduser mirror                       # a regular user (set a password)
+  usermod -aG sudo mirror
+  install -d -m700 -o mirror -g mirror /home/mirror/.ssh
+  # paste YOUR public key:
+  echo 'ssh-ed25519 AAAA...you' > /home/mirror/.ssh/authorized_keys
+  chmod 600 /home/mirror/.ssh/authorized_keys
+  chown mirror:mirror /home/mirror/.ssh/authorized_keys
+  cat > /etc/ssh/sshd_config.d/10-mirror.conf <<'CONF'
+PermitRootLogin no
+PasswordAuthentication no
+CONF
+  exit
 ```
-**Recommended once you're in:** add your SSH key to `/root/.ssh/authorized_keys` and set
-`PermitRootLogin prohibit-password` / `PasswordAuthentication no`. (The mirror's sshd has no sftp
+Now you log in as `mirror` with your key and `sudo` for root. (The mirror's sshd has no sftp
 subsystem, so copy files with `scp -O` or pipe over ssh.)
+
+> **If you must bootstrap with a password first** (no key handy, can't reach the console): set
+> `PasswordAuthentication yes` *temporarily*, use a **strong, unique** password (never a default from
+> any guide), get your key installed, then switch both lines back to the safe values above. Root
+> password login over SSH is a bring-up crutch, not a resting state — the reference unit's "root +
+> password" setup was bench convenience, not a recommendation.
 
 ## 5. Apply the LemonadeMirror overlay
 Copy the repo's overlay (services, ALSA config, camera hub + helper scripts) on top of the rootfs:
