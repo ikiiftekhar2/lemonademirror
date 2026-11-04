@@ -1,0 +1,9 @@
+#!/bin/sh
+# Last step of a shutdown, after services stop and disks are unmounted. The kernel's
+# own path gets stuck on this board, so go straight to the firmware instead.
+M=/usr/local/lib/mirror-reboot/mirror_reset_now.ko
+sync
+case "$1" in
+	reboot) exec /usr/sbin/insmod "$M" ;;
+	poweroff) exec /usr/sbin/insmod "$M" off=1 ;;
+esac

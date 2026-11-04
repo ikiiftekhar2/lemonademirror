@@ -57,7 +57,7 @@ in ~30–60 s. (It boots with the **backlight off** by design — that's the `sc
 it on with `screenon 80`.)
 
 ## Notes & gotchas
-- **`reboot` over SSH hangs** on this board — use `sync; poweroff` then power-cycle.
+- **`reboot` over SSH works** with the overlay's shutdown hook installed ([details](drivers/reboot.md)). Without it, the board hangs and needs a power-cycle.
 - If a bad kernel won't boot: `ums 0 mmc 2` again, mount the FAT partition, copy a known-good `Image`
   back. Keep your last-good `Image`/`dtb`.
 - Full restore to stock: `dd` your `mmcblk2_stock.img` back over the whole eMMC.

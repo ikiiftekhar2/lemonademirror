@@ -73,6 +73,8 @@ sudo cp -a /path/to/lemonademirror/rootfs/overlay/* rootfs/
 sudo chroot rootfs systemctl enable camhub.service screen-off.service mirror-buttond.service
 # screen-off races with this restore service and can lose, lighting the screen at boot
 sudo chroot rootfs systemctl mask systemd-backlight@backlight:backlight.service
+# the reboot fix (see drivers/reboot.md) needs the kernel build's module in place:
+# rootfs/overlay/usr/local/lib/mirror-reboot/mirror_reset_now.ko is built for vermagic 6.18.60-dirty
 # the Bluetooth name
 sudo sed -i -E '0,/^#?Name *=.*/s//Name = Lemonade Mirror/' rootfs/etc/bluetooth/main.conf
 ```

@@ -59,7 +59,7 @@ keyboard).
 - 🟡 **Bluetooth** — works, but offers no profiles yet (not a speaker or headset); reconnect not tested.
 - 🟡 **Harmless `caam_probe` kernel oops** on every boot (the crypto block is owned by the secure
   firmware); system runs fine. Blacklisting the `caam` module silences it.
-- 🟡 **`reboot` over SSH hangs** — use `poweroff` then power-cycle. Cause not yet pinned down.
+- ✅ **`reboot` over SSH works** through a firmware-reset shutdown hook ([details](docs/drivers/reboot.md)); which driver hangs the kernel's own path is still unknown.
 - 🟡 **Video playback on the panel** is not smooth — the hardware H.264 decoder works (~24 fps,
   low CPU) but getting decoded frames onto the display is the bottleneck. Fine as a UI device;
   not a media player. [notes](docs/developer-guide.md).

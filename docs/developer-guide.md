@@ -150,7 +150,7 @@ speakers/mic via ALSA default (chimes, TTS, voice)
 - **Services at boot:** `screen-off` (backlight 0), `camhub` (camera), ALSA restore, timesyncd (NTP;
   no RTC, so the clock is wrong until it syncs), NetworkManager, ssh.
 - **Time:** wait for `timedatectl show -p NTPSynchronized --value` = `yes` before trusting timestamps.
-- **Reboot:** `reboot` over SSH hangs — use `sync; poweroff` then power-cycle.
+- **Reboot:** `reboot` over SSH works (35–43 s). `shutdown` and `poweroff` turn the board off, and wall power brings it back. [details](drivers/reboot.md)
 - **Video playback** on the panel is not smooth (HW decode works ~24 fps, but the decode→display path
   is the bottleneck). Fine as a UI device; not a media player.
 - `/tmp` is RAM and wiped on boot.
