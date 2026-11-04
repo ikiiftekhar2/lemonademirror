@@ -2,7 +2,7 @@
 
 An optional shortcut. The main thing this project offers is [the kernel package](../README.md#the-kernel-package); this script is a convenience on top of it. It burns a ready-made Debian image that includes that kernel, so you'll have the display, speakers, mic, camera, Wi-Fi, Bluetooth and bottom button set up, and `reboot` working over SSH.
 
-**This guide starts once you can reach the `u-boot=>` prompt.** Getting there on a locked unit is covered in [Get a U-Boot prompt](01-get-uboot.md). Thanks to gouda-percha for that work.
+**This guide starts once you can reach the `u-boot=>` prompt.** To get there on a locked unit, follow **[gouda-percha's guide](https://failedattempts.neocities.org/)**. None of this project would be possible without that work, so a huge thank you to gouda-percha for figuring it out and sharing it. There's more detail in [Get a U-Boot prompt](01-get-uboot.md).
 
 > ⚠️ **Testing status:** the image passed a full run in an emulator (real U-Boot, real kernel, the reference unit's real partitions and firmware), and its files match a working mirror. **It hasn't been burned on real hardware yet.** See [What has been tested](#what-has-been-tested). Do step 2 first, and please [report how it goes](https://github.com/ikiiftekhar2/lemonademirror/issues).
 
