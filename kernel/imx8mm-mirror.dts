@@ -537,8 +537,8 @@
 };
 
 /* B4 §7: display pipeline — lcdif → DSIM (4 lane) → SN65DSI84 → LVDS panel.
- * Dumb LVDS panel behind the bridge: panel-lvds with the vendor hj070na
- * timings (148.5 MHz 1920x1080@60). */
+ * Dumb LVDS panel behind the bridge: panel-lvds with the vendor's compiled-in
+ * mode (148.5 MHz 1920x1080@60). */
 &lcdif {
 	status = "okay";
 };
@@ -973,16 +973,17 @@
 	status = "okay";
 };
 
-/* LVDS panel behind the SN65DSI84 — vendor timings (B4 §7): hj070na,
- * 148.5 MHz, 1920x1080@60 (hfp 80 hsync 120 hbp 80 / vfp 5 vsync 15 vbp 25).
+/* LVDS panel behind the SN65DSI84 — vendor kernel's compiled-in mode:
+ * 148.5 MHz, 1920x1080@60 (hfp 80 hsync 80 hbp 120 / vfp 5 vsync 15 vbp 25).
  * panel-lvds binding: vendor compatible + "panel-lvds" fallback;
  * "tn,hj070na" added to the local panel-lvds enum patch (see C_results). */
 / {
 	panel: lvds-panel {
 		compatible = "tn,hj070na", "panel-lvds";
-		width-mm = <889>;	/* vendor panel-width-mm 0x375 — NXP misuse,
-					   B4 §7: tag stays dubious, harmless */
-		height-mm = <498>;	/* vendor 0x1f2 */
+		/* Vendor kernel's compiled-in mode for tn,dsi2lvds-panel; it never read
+		 * the DT's display-timings (hj070na), so those numbers were never live. */
+		width-mm = <941>;
+		height-mm = <529>;
 		data-mapping = "vesa-24";
 		backlight = <&backlight>;
 
@@ -991,8 +992,8 @@
 			hactive = <1920>;
 			vactive = <1080>;
 			hfront-porch = <80>;
-			hsync-len = <120>;
-			hback-porch = <80>;
+			hsync-len = <80>;
+			hback-porch = <120>;
 			vfront-porch = <5>;
 			vsync-len = <15>;
 			vback-porch = <25>;

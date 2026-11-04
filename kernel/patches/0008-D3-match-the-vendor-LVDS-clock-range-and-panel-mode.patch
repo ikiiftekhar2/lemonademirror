@@ -1,0 +1,86 @@
+From cee876e098d9c52cdbeb45b89e1c70ec9b14fad6 Mon Sep 17 00:00:00 2001
+From: Iftekhar Khaled <samintisardev@gmail.com>
+Date: Wed, 4 Nov 2026 16:05:25 +0000
+Subject: [PATCH] D3: match the vendor LVDS clock range and panel mode
+
+- Add LVDS_PLL (0x0a) = 0x05 to the vendor override. It still held the
+  137.5-154 MHz range while the bridge output 74.25 MHz per channel, because
+  the driver treats the link as single while the override makes it dual.
+- Use the vendor kernel's compiled-in mode: hsync 80, back porch 120, panel
+  941x529 mm. The vendor DT's display-timings (hj070na) were never read, as
+  that kernel only looks for panel-timing.
+
+CHA_PLL_UNLOCK went from 20 events in 10 minutes to 0, with the test card and
+live camera view on the glass. It doesn't affect video frame pacing.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../boot/dts/freescale/imx8mm-mirror.dts      | 19 ++++++++++---------
+ drivers/gpu/drm/bridge/ti-sn65dsi83.c         |  2 ++
+ 2 files changed, 12 insertions(+), 9 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/freescale/imx8mm-mirror.dts b/arch/arm64/boot/dts/freescale/imx8mm-mirror.dts
+index 7418f746d..1dac976f7 100644
+--- a/arch/arm64/boot/dts/freescale/imx8mm-mirror.dts
++++ b/arch/arm64/boot/dts/freescale/imx8mm-mirror.dts
+@@ -537,8 +537,8 @@ tas5806_right: amplifier@2f {
+ };
+ 
+ /* B4 §7: display pipeline — lcdif → DSIM (4 lane) → SN65DSI84 → LVDS panel.
+- * Dumb LVDS panel behind the bridge: panel-lvds with the vendor hj070na
+- * timings (148.5 MHz 1920x1080@60). */
++ * Dumb LVDS panel behind the bridge: panel-lvds with the vendor's compiled-in
++ * mode (148.5 MHz 1920x1080@60). */
+ &lcdif {
+ 	status = "okay";
+ };
+@@ -973,16 +973,17 @@ &wdog1 {
+ 	status = "okay";
+ };
+ 
+-/* LVDS panel behind the SN65DSI84 — vendor timings (B4 §7): hj070na,
+- * 148.5 MHz, 1920x1080@60 (hfp 80 hsync 120 hbp 80 / vfp 5 vsync 15 vbp 25).
++/* LVDS panel behind the SN65DSI84 — vendor kernel's compiled-in mode:
++ * 148.5 MHz, 1920x1080@60 (hfp 80 hsync 80 hbp 120 / vfp 5 vsync 15 vbp 25).
+  * panel-lvds binding: vendor compatible + "panel-lvds" fallback;
+  * "tn,hj070na" added to the local panel-lvds enum patch (see C_results). */
+ / {
+ 	panel: lvds-panel {
+ 		compatible = "tn,hj070na", "panel-lvds";
+-		width-mm = <889>;	/* vendor panel-width-mm 0x375 — NXP misuse,
+-					   B4 §7: tag stays dubious, harmless */
+-		height-mm = <498>;	/* vendor 0x1f2 */
++		/* Vendor kernel's compiled-in mode for tn,dsi2lvds-panel; it never read
++		 * the DT's display-timings (hj070na), so those numbers were never live. */
++		width-mm = <941>;
++		height-mm = <529>;
+ 		data-mapping = "vesa-24";
+ 		backlight = <&backlight>;
+ 
+@@ -991,8 +992,8 @@ panel-timing {
+ 			hactive = <1920>;
+ 			vactive = <1080>;
+ 			hfront-porch = <80>;
+-			hsync-len = <120>;
+-			hback-porch = <80>;
++			hsync-len = <80>;
++			hback-porch = <120>;
+ 			vfront-porch = <5>;
+ 			vsync-len = <15>;
+ 			vback-porch = <25>;
+diff --git a/drivers/gpu/drm/bridge/ti-sn65dsi83.c b/drivers/gpu/drm/bridge/ti-sn65dsi83.c
+index 887b7f248..4d97c4fbb 100644
+--- a/drivers/gpu/drm/bridge/ti-sn65dsi83.c
++++ b/drivers/gpu/drm/bridge/ti-sn65dsi83.c
+@@ -489,6 +489,8 @@ static void sn65dsi83_monitor_stop(struct sn65dsi83 *ctx)
+  * actives 0x20..0x27, sync delay 0x28/29) already matches.
+  */
+ static const struct reg_sequence sn65dsi83_mirror_vendor_override[] = {
++	/* LVDS_CLK_RANGE 62.5-87.5 MHz + HS clock from DSI: vendor 0x05 (dual-link) */
++	{ REG_RC_LVDS_PLL,				0x05 },
+ 	/* LVDS clock mode / DSI clock divider: vendor 0x28 (mainline 0x10) */
+ 	{ REG_RC_DSI_CLK,				0x28 },
+ 	/* LVDS format (JEIDA + polarity + link cfg): vendor 0x6c (0x78) */
+-- 
+2.43.0
+

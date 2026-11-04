@@ -36,7 +36,7 @@ controller.)
 | | |
 |---|---|
 | Bridge | **TI SN65DSI83** (DSI→LVDS), I²C2 @0x2c, enable GPIO. *The vendor device tree labels it SN65DSI84; the mainline `ti-sn65dsi83` driver drives it fine.* |
-| Panel | **1920×1080 LVDS**, `compatible = "tn,hj070na…"` (panel-lvds), 60 Hz |
+| Panel | **1920×1080 dual-link LVDS**, 941×529 mm, `compatible = "tn,hj070na…"` (panel-lvds), 60 Hz |
 | Orientation | panel is **landscape glass mounted 90° clockwise** in a portrait body → render portrait (1080×1920) and rotate **90° CCW** |
 | Display controller | i.MX8MM **LCDIF** → `mxsfb` DRM driver (`32e00000.lcdif`), connector `LVDS-1` |
 | Backlight | `pwm-backlight` on PWM `30670000.pwm`, 1 kHz, inverse polarity, 101 levels (0 = off) |

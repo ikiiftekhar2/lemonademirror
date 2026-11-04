@@ -91,7 +91,7 @@ at the right moment in the bridge's enable sequence:
   (All of these are already in the driver's writeable register ranges, so no regmap changes.)
 
 Build it as a module against mainline 6.18 (`make M=drivers/gpu/drm/bridge`), deploy, and on the next
-modeset the kernel log prints `vendor LVDS override applied (8 regs)`, a regmap dump matches the
+modeset the kernel log prints `vendor LVDS override applied (9 regs)`, a regmap dump matches the
 vendor values, bridge register 0x0a reads with bit 7 set (**PLL locked**), and real pixels appear on
 the glass.
 
@@ -133,3 +133,15 @@ avoid flashes. The system boots dark on purpose via a `screen-off` service; `scr
 - Recovery from a bad kernel: interrupt U-Boot over the UART, `ums 0 mmc 2` to expose the eMMC as a
   USB disk, mount the FAT boot partition on your PC, copy a known-good `Image` back. See
   [04-flash-and-persist.md](../04-flash-and-persist.md).
+
+## Vendor audit: clock range and panel mode (patch `0008`)
+A later decode of the vendor kernel showed two more differences, now fixed:
+- **`0x0a` = `0x05`** joined the override. It still claimed a 137.5–154 MHz LVDS clock while the bridge output 74.25 MHz per channel:
+  this panel is **dual-link**, but the driver treats the link as single and the override only partly converts it.
+- **Panel mode:** hsync 80, back porch 120, 941×529 mm. The vendor kernel looks for `panel-timing`, but its DT only has
+  `display-timings`, so those DT numbers never ran on Android; a compiled-in mode did.
+
+**Result on the reference unit:** the bridge's silent `PLL_UNLOCK` flag (`0xe5` bit 0) went from 20 events in 10 minutes to 0, with the
+picture verified by eye. It doesn't change video frame pacing, which is a rendering limit, not a link problem.
+
+Still different from vendor, with no symptom: burst DSI vs non-burst sync pulse, and D-PHY timing from upstream's formula.

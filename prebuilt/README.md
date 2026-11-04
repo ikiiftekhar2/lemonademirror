@@ -6,7 +6,7 @@ revision. Verify with `sha256sum -c SHA256SUMS`.
 | File | What |
 |---|---|
 | `Image` | mainline 6.18.60 kernel with the LemonadeMirror patches, `vermagic` **`6.18.60-dirty`** |
-| `imx8mm-mirror.dtb` | the device tree (display override, audio clocks, mic MCLK, CMA, Bluetooth, bottom button, etc.) |
+| `imx8mm-mirror.dtb` | the device tree (display override, audio clocks, mic MCLK, CMA, Bluetooth, bottom button, panel mode, etc.) |
 | `modules-6.18.60-dirty.tar.gz` | matching module tree — untar into your rootfs: `tar xzf … -C <rootfs>/lib/modules/` |
 | `v4l2loopback.ko` | patched multi-reader v4l2loopback (also inside the modules tarball) |
 
