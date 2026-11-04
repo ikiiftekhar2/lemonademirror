@@ -94,11 +94,12 @@ you have the system this repo describes.
 For writing apps on top (speakers, mic, camera, display, suggested gesture-UI architecture), see the
 **[developer guide](docs/developer-guide.md)**.
 
-## Shortcut: flash my prebuilt binaries
+## The kernel package
+
+**This is the main thing this project gives you:** a mainline Linux 6.18 kernel for the Lululemon Mirror, with working drivers for the display, speakers, mic, camera, Wi-Fi, Bluetooth and bottom button. Get it from [`prebuilt/`](prebuilt/) or the [latest release](https://github.com/ikiiftekhar2/lemonademirror/releases/latest), or build it yourself from the patches in [`kernel/patches/`](kernel/patches/).
 
 If your board is the **same revision as mine** (`cat /proc/device-tree/model` →
-`lululemon Mirror V1.1`, i.MX8M Mini), you can skip building the kernel entirely and use the
-known-good binaries in **[`prebuilt/`](prebuilt/)** — the exact kernel, device tree and modules
+`lululemon Mirror V1.1`, i.MX8M Mini), these are the exact kernel, device tree and modules
 running on my unit:
 
 | File | What |
@@ -123,6 +124,12 @@ Then flash per [docs/04](docs/04-flash-and-persist.md). Verify the binaries firs
 > ([docs/02](docs/02-build-kernel.md)). If something's different on your unit, a PR or issue noting
 > what matches and what doesn't is very welcome.
 
+### Cherry on top: a one-script install
+
+Don't want to put a Debian system together yourself? There's also a ready-made Debian image with this kernel and all its services set up. Once you have a U-Boot prompt and a backup, one script burns it and asks for your Wi-Fi details. **[Flash guide](docs/06-flash-image.md)**.
+
+It passed a full emulator run with a real U-Boot, but hasn't been burned on real hardware yet ([what's been tested](docs/06-flash-image.md#what-has-been-tested)).
+
 ---
 
 ## Repo layout
@@ -134,6 +141,8 @@ prebuilt/      known-good Image + dtb + modules, to flash without building
 rootfs/overlay/   files that go on top of a plain Debian rootfs (systemd units, ALSA
                   config, camera hub + helper scripts)
 rootfs/templates/ WiFi / SSH / boot-script templates you populate with your details
+image/         builds and burns the ready-made image (flash tool, UART check)
+tools/         source for the button daemon and reboot helper
 scripts/       helper scripts (extract vendor blobs from your backup, build boot.scr, …)
 docs/          the full walkthrough + per-driver deep-dives + developer guide
 ```
@@ -146,6 +155,8 @@ docs/          the full walkthrough + per-driver deep-dives + developer guide
 3. [Build a Debian rootfs (headless WiFi + SSH)](docs/03-build-rootfs.md)
 4. [Flash the eMMC and make it persistent](docs/04-flash-and-persist.md)
 5. [Extract the vendor firmware blobs from your backup](docs/05-extract-vendor-blobs.md)
+
+**Optional shortcut for 3–5:** [the one-script image install](docs/06-flash-image.md).
 
 **Reference & deep-dives:**
 - [Hardware reference](docs/hardware-reference.md) — chips, buses, addresses, clocks

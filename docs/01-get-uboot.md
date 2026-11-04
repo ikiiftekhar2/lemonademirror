@@ -43,4 +43,4 @@ u-boot=> ums 0 mmc 2        # eMMC now appears as a USB mass-storage device on y
 Full restore later is just the reverse `dd`. The signed ROM boot partitions (`boot0`/`boot1`) are
 never touched by this project.
 
-Next: [build the kernel](02-build-kernel.md).
+Next: [flash the ready-made image](06-flash-image.md), or [build the kernel](02-build-kernel.md) yourself.

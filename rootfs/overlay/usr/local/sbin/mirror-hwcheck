@@ -1,0 +1,72 @@
+#!/usr/bin/python3
+"""Check every hardware path on a running mirror. Read-only; plays no sound, keeps the
+screen as it is. Run as root: sudo mirror-hwcheck"""
+import glob
+import os
+import subprocess
+import sys
+
+results = []
+
+
+def sh(cmd, timeout=20):
+    try:
+        p = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+        return p.returncode, p.stdout + p.stderr
+    except subprocess.TimeoutExpired:
+        return 1, "timed out"
+
+
+def check(name, ok, detail=""):
+    results.append(ok)
+    print("%-5s %-28s %s" % ("PASS" if ok else "FAIL", name, detail))
+
+
+def read(path):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def bridge_regs():
+    regs = {}
+    for line in read("/sys/kernel/debug/regmap/1-002c/registers").splitlines():
+        key, _, value = line.partition(":")
+        regs[key] = value.strip()
+    return regs
+
+
+check("device tree", "Mirror V1.1" in read("/proc/device-tree/model"), read("/proc/device-tree/model").strip("\0"))
+check("eMMC", os.path.exists("/dev/mmcblk2p9") and os.path.exists("/dev/mmcblk2p4"))
+status = [read(p) for p in glob.glob("/sys/class/drm/card*-LVDS-1/status")]
+check("display connector", status == ["connected"], ",".join(status))
+regs = bridge_regs()
+check("bridge PLL locked", regs.get("0a") == "85", "0a=" + regs.get("0a", "?"))
+check("framebuffer", os.path.exists("/dev/fb0"))
+check("backlight", read("/sys/class/backlight/backlight/max_brightness") == "100",
+      "brightness " + read("/sys/class/backlight/backlight/brightness"))
+rc, out = sh("timeout 8 v4l2-ctl -d /dev/video10 --stream-mmap --stream-count=15 --stream-to=/dev/null")
+check("camera", rc == 0 and out.count("<") >= 15, "/dev/video10, 15 frames")
+rc, out = sh("aplay -l")
+check("speakers", rc == 0 and "card" in out)
+rc, out = sh("timeout 4 arecord -q -D default -d 1 -f S16_LE -r 16000 /dev/null")
+check("microphone", rc == 0, out.strip()[:40])
+for name in ("tas5805m_dsp_tweeters.bin", "tas5805m_dsp_woofers.bin", "brcm/brcmfmac43455-sdio.bin", "brcm/BCM4345C0.hcd"):
+    check("firmware " + os.path.basename(name), os.path.exists("/lib/firmware/" + name))
+wlan = read("/sys/class/net/wlan0/operstate")
+check("Wi-Fi", wlan == "up", "wlan0 " + wlan)
+rc, out = sh("hciconfig hci0")
+check("Bluetooth", "UP RUNNING" in out)
+check("button driver", read("/sys/module/snvs_pwrkey/parameters/poll_ms") not in ("", "0"), "polling")
+rc, out = sh("systemctl is-active mirror-buttond")
+check("button events", out.strip() == "active" and os.path.exists("/run/mirror-button/events.sock"))
+check("reboot fix", os.access("/usr/lib/systemd/system-shutdown/mirror-reboot", os.X_OK))
+rc, out = sh("systemctl is-active camhub")
+check("camera service", out.strip() == "active")
+rc, out = sh("systemctl is-active ssh")
+check("ssh", out.strip() == "active")
+print("\n%d of %d passed" % (sum(results), len(results)))
+print("Not checked here, needs a person: picture on the glass, sound by ear, button presses, phone pairing.")
+sys.exit(0 if all(results) else 1)

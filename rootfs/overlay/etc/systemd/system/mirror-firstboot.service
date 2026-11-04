@@ -1,0 +1,16 @@
+[Unit]
+Description=LemonadeMirror first boot (firmware, Wi-Fi, login, resize)
+ConditionPathExists=!/var/lib/mirror-firstboot.done
+DefaultDependencies=no
+After=local-fs.target systemd-udev-settle.service
+Before=NetworkManager.service ssh.service sysinit.target
+Wants=systemd-udev-settle.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/mirror-firstboot
+StandardOutput=journal+console
+
+[Install]
+WantedBy=sysinit.target

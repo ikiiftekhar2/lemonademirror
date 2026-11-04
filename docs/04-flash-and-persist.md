@@ -1,5 +1,7 @@
 # 4. Flash the eMMC and make it boot your Linux
 
+> **Don't want to build anything?** [Flash the ready-made image](06-flash-image.md) instead. This page is for your own build.
+
 The stock bootloader (U-Boot) stays in place. We write our kernel + rootfs onto the eMMC and save a
 U-Boot environment that boots them on every power-on. The ROM boot partitions are never touched.
 

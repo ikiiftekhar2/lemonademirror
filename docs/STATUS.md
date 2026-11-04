@@ -20,6 +20,7 @@ Legend: ✅ working · 🟡 partial / unconfirmed · 🔴 not working · ⏸ par
 | — | Unattended cold boot | ✅ | saved U-Boot env loads a boot script; WiFi autoconnects | up + SSH ~30–60 s after power-on, repeatedly |
 | — | `caam_probe` kernel oops | 🟡 harmless | crypto block is owned by the secure firmware; oops every boot, system runs fine | dmesg; blacklisting `caam` silences it |
 | — | `reboot` / `shutdown` / `poweroff` | ✅ | kernel path gets stuck before the reset → shutdown hook resets through firmware; reboots back in 35–43 s (8 of 8). `shutdown` stays off; wall power restores. [details](drivers/reboot.md) |
+| — | Ready-made image | 🟡 | passes a full emulator run with real U-Boot (31 checks); not yet burned on real hardware. [Guide](06-flash-image.md) |
 | — | Video on the panel | ⏸ | HW H.264 decode works (~24 fps, ~19% CPU) but display path is ~1 fps; it's a UI device, not a media player | GStreamer measurements |
 
 Full per-block write-ups are under [docs/drivers/](drivers/).

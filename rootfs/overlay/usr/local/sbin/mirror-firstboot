@@ -1,0 +1,247 @@
+#!/usr/bin/python3
+"""First boot of a flashed LemonadeMirror image.
+
+Extracts the vendor firmware from this unit's own Android partitions, applies
+mirror-config.txt from the boot partition, wipes that file, grows the root
+filesystem and reboots. Runs before networking. Stops and logs on any failure,
+so the next boot tries again. Log: mirror-firstboot.log on the boot partition.
+
+  mirror-firstboot --extract-only DIR   only extract firmware into DIR (read-only)
+"""
+import hashlib
+import os
+import re
+import struct
+import subprocess
+import sys
+import tempfile
+import time
+
+EMMC = "/dev/mmcblk2"
+SUPER = EMMC + "p8"
+BOOT_A = EMMC + "p3"
+BOOT_LABEL = "MIRRORBOOT"
+CONFIG = "mirror-config.txt"
+DONE = "/var/lib/mirror-firstboot.done"
+SECTOR = 512
+
+# Files in vendor_a -> /lib/firmware name, with the sha256 from the reference unit.
+VENDOR_FILES = {
+    "firmware/brcm/brcmfmac43455-sdio.bin":
+        ("brcm/brcmfmac43455-sdio.bin", "c0d970e5a1d27b7c"),
+    "firmware/brcm/brcmfmac43455-sdio.clm_blob":
+        ("brcm/brcmfmac43455-sdio.clm_blob", "098a4eb82b0e1808"),
+    "firmware/brcm/brcmfmac43455-sdio.txt":
+        ("brcm/brcmfmac43455-sdio.txt", "79d966657af93bbf"),
+    "firmware/BCM4345C0_003.001.025.0172.0000_Murata_1MW_Arrow.hcd":
+        ("brcm/BCM4345C0.hcd", "b964b37338552780"),
+}
+# The driver looks for a board-specific NVRAM name first.
+NVRAM_ALIAS = ("brcm/brcmfmac43455-sdio.txt",
+               "brcm/brcmfmac43455-sdio.lululemon,mirror-v1.1.txt")
+
+# Amp DSP tables are compiled into the vendor kernel. Found by their common start.
+AMP_MAGIC = bytes.fromhex("00007f0003020111")
+AMP_SIZE = 3264
+AMP_TABLES = {
+    "6a01cc299b284006": "tas5805m_dsp_tweeters.bin",
+    "510a1456d13e13d9": "tas5805m_dsp_woofers.bin",
+}
+
+
+def log(msg):
+    print("mirror-firstboot: " + msg, flush=True)
+
+
+def run(*args):
+    return subprocess.run(args, check=True, capture_output=True, text=True).stdout
+
+
+def vendor_extent():
+    """Return (offset, size) in bytes of vendor_a inside super, from its LP metadata."""
+    with open(SUPER, "rb") as f:
+        f.seek(4096 * 3)
+        header = f.read(4096)
+        if header[:4] != b"0PLA":
+            raise RuntimeError("no Android dynamic partition metadata in super")
+        size = struct.unpack_from("<I", header, 8)[0]
+        parts = struct.unpack_from("<III", header, 80)
+        extents = struct.unpack_from("<III", header, 92)
+        f.seek(4096 * 3 + size)
+        tables = f.read(extents[0] + extents[1] * extents[2])
+    for i in range(parts[1]):
+        entry = tables[parts[0] + i * parts[2]:parts[0] + (i + 1) * parts[2]]
+        if entry[:36].split(b"\0")[0] != b"vendor_a":
+            continue
+        first, count = struct.unpack_from("<II", entry, 40)
+        if count != 1:
+            raise RuntimeError("vendor_a isn't one contiguous extent")
+        ext = tables[extents[0] + first * extents[2]:]
+        sectors, _, target = struct.unpack_from("<QIQ", ext, 0)
+        return target * SECTOR, sectors * SECTOR
+    raise RuntimeError("vendor_a not found in super")
+
+
+def save(dest, name, data, want=None):
+    path = os.path.join(dest, name)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(data)
+    got = hashlib.sha256(data).hexdigest()
+    if want and not got.startswith(want):
+        log("WARNING %s differs from the reference unit (%s)" % (name, got[:16]))
+    else:
+        log("firmware %s OK (%s)" % (name, got[:16]))
+
+
+def extract_vendor(dest):
+    offset, size = vendor_extent()
+    loop = run("losetup", "-r", "-f", "--show", "-o", str(offset),
+               "--sizelimit", str(size), SUPER).strip()
+    try:
+        with tempfile.TemporaryDirectory() as mnt:
+            run("mount", "-t", "ext4", "-o", "ro,noload", loop, mnt)
+            try:
+                for src, (name, want) in VENDOR_FILES.items():
+                    with open(os.path.join(mnt, src), "rb") as f:
+                        save(dest, name, f.read(), want)
+            finally:
+                run("umount", mnt)
+    finally:
+        run("losetup", "-d", loop)
+    src, alias = NVRAM_ALIAS
+    with open(os.path.join(dest, src), "rb") as f:
+        save(dest, alias, f.read())
+
+
+def extract_amps(dest):
+    with open(BOOT_A, "rb") as f:
+        data = f.read()
+    found = {}
+    pos = data.find(AMP_MAGIC)
+    while pos >= 0:
+        table = data[pos:pos + AMP_SIZE]
+        name = AMP_TABLES.get(hashlib.sha256(table).hexdigest()[:16])
+        if name:
+            found[name] = table
+        pos = data.find(AMP_MAGIC, pos + 1)
+    missing = set(AMP_TABLES.values()) - set(found)
+    if missing:
+        raise RuntimeError("amp tables not found in boot_a: " + ", ".join(sorted(missing)))
+    for name, table in found.items():
+        save(dest, name, table)
+
+
+def extract_firmware(dest):
+    extract_vendor(dest)
+    extract_amps(dest)
+
+
+def read_config(path):
+    config = {}
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.rstrip("\r\n")
+            if line == "#END":
+                break
+            if line and not line.startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
+                config[key.strip()] = value
+    return config
+
+
+def nm_escape(value):
+    return value.replace("\\", "\\\\").replace(";", r"\;")
+
+
+def write_wifi(ssid, psk):
+    path = "/etc/NetworkManager/system-connections/mirror-wifi.nmconnection"
+    text = ("[connection]\nid=mirror-wifi\ntype=wifi\ninterface-name=wlan0\n"
+            "autoconnect=true\n\n[wifi]\nmode=infrastructure\nssid=%s\n\n" % nm_escape(ssid))
+    if psk:
+        text += "[wifi-security]\nkey-mgmt=wpa-psk\npsk=%s\n\n" % nm_escape(psk)
+    text += "[ipv4]\nmethod=auto\n\n[ipv6]\nmethod=auto\n"
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
+
+
+def apply_config(config):
+    for key in ("WIFI_SSID", "PASSWORD"):
+        if not config.get(key):
+            raise RuntimeError(key + " is missing from " + CONFIG)
+    write_wifi(config["WIFI_SSID"], config.get("WIFI_PASSWORD", ""))
+    hostname = config.get("HOSTNAME") or "mirror"
+    with open("/etc/hostname", "w") as f:
+        f.write(hostname + "\n")
+    with open("/etc/hosts") as f:
+        hosts = re.sub(r"(?m)^127\.0\.1\.1.*$", "127.0.1.1\t" + hostname, f.read())
+    with open("/etc/hosts", "w") as f:
+        f.write(hosts)
+    subprocess.run(["chpasswd"], input="mirror:%s\n" % config["PASSWORD"], text=True, check=True)
+    key = config.get("SSH_KEY", "").strip()
+    if key:
+        os.makedirs("/home/mirror/.ssh", mode=0o700, exist_ok=True)
+        with open("/home/mirror/.ssh/authorized_keys", "w") as f:
+            f.write(key + "\n")
+        run("chown", "-R", "mirror:mirror", "/home/mirror/.ssh")
+        os.chmod("/home/mirror/.ssh/authorized_keys", 0o600)
+        with open("/etc/ssh/sshd_config.d/10-mirror.conf", "a") as f:
+            f.write("PasswordAuthentication no\n")
+    tz = config.get("TIMEZONE", "").strip()
+    if tz and os.path.exists("/usr/share/zoneinfo/" + tz):
+        if os.path.lexists("/etc/localtime"):
+            os.remove("/etc/localtime")
+        os.symlink("/usr/share/zoneinfo/" + tz, "/etc/localtime")
+
+
+def wipe(path):
+    size = os.path.getsize(path)
+    with open(path, "r+b") as f:
+        f.write(b"\0" * size)
+        f.flush()
+        os.fsync(f.fileno())
+    os.remove(path)
+
+
+def first_boot(boot):
+    config_path = os.path.join(boot, CONFIG)
+    extract_firmware("/lib/firmware")
+    if not os.path.exists(config_path):
+        raise RuntimeError(CONFIG + " not found on the boot partition")
+    apply_config(read_config(config_path))
+    run("ssh-keygen", "-A")
+    root = run("findmnt", "-n", "-o", "SOURCE", "/").strip()
+    run("resize2fs", root)
+    subprocess.run(["sync"], check=True)
+    wipe(config_path)
+    with open(DONE, "w") as f:
+        f.write(time.strftime("%F %T\n"))
+    log("done, rebooting so the drivers load their firmware")
+    subprocess.run(["sync"], check=True)
+    subprocess.run(["systemctl", "--no-block", "reboot"], check=True)
+
+
+def main():
+    if len(sys.argv) == 3 and sys.argv[1] == "--extract-only":
+        extract_firmware(sys.argv[2])
+        return 0
+    boot = "/run/mirror-boot"
+    os.makedirs(boot, exist_ok=True)
+    run("mount", "-L", BOOT_LABEL, boot)
+    status = 1
+    try:
+        first_boot(boot)
+        status = 0
+    except Exception as err:  # keep the reason where the user can read it without a login
+        log("FAILED: %s" % err)
+        with open(os.path.join(boot, "mirror-firstboot.log"), "a") as f:
+            f.write("FAILED: %s\n" % err)
+    finally:
+        subprocess.run(["sync"])
+        subprocess.run(["umount", boot])
+    return status
+
+
+if __name__ == "__main__":
+    sys.exit(main())
