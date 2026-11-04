@@ -68,13 +68,13 @@ controller.)
 |---|---|
 | Combo chip | **Broadcom/Cypress BCM4345/6** (CYW43455-class) |
 | WiFi | on **SDIO / usdhc1**, driver `brcmfmac`, firmware 7.45.214; VMMC regulator must be **3.3 V** (the key D6 fix). Needs `brcmfmac43455-sdio.{bin,txt,clm_blob}` + board NVRAM |
-| Bluetooth | on **UART1** (`30860000.serial`), driver `hci_uart`/bcm, patch file `BCM4345C0.hcd`. **Not working yet** (D7) |
+| Bluetooth | on **UART1** (`30860000.serial`), driver `hci_uart`/bcm, patch file `BCM4345C0.hcd`, 3 Mbaud. BT_REG_ON = GPIO2_IO06, **active high** in mainline (D7) |
 
 ## Other GPIO / input
 
 | | |
 |---|---|
-| Front button | `gpio-keys`, emits **`KEY_F10`**, one physical button (no hidden second button) |
+| Bottom button | SNVS ONOFF pad, `snvs_pwrkey` (polled), emits **`KEY_PROG1`** (D8). A separate `gpio-keys` line (GPIO5_IO28, "Factory Reset") is also ported, but no press has been seen on it. |
 | Touch | **none** — no touch controller exists on this board |
 | RTC | **no battery-backed RTC** — the clock starts near 1970 until NTP syncs |
 

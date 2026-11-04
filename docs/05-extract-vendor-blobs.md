@@ -8,7 +8,7 @@ blob is from your own device.
 |---|---|---|
 | `tas5805m_dsp_tweeters.bin`, `tas5805m_dsp_woofers.bin` | speakers (D4) | the two amp DSP register tables, compiled into the **vendor Android kernel** (`boot_a`) |
 | `brcmfmac43455-sdio.bin`, `.txt` (NVRAM), `.clm_blob` | WiFi (D6) | the **vendor partition** firmware directory |
-| `BCM4345C0.hcd` | Bluetooth (D7, WIP) | same |
+| `BCM4345C0.hcd` | Bluetooth (D7) | same |
 
 ## WiFi / BT firmware
 These are ordinary files in the vendor filesystem. Loop-mount or extract the vendor partition from

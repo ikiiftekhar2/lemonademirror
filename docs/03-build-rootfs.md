@@ -70,7 +70,11 @@ subsystem, so copy files with `scp -O` or pipe over ssh.)
 Copy the repo's overlay (services, ALSA config, camera hub + helper scripts) on top of the rootfs:
 ```sh
 sudo cp -a /path/to/lemonademirror/rootfs/overlay/* rootfs/
-sudo chroot rootfs systemctl enable camhub.service screen-off.service
+sudo chroot rootfs systemctl enable camhub.service screen-off.service mirror-buttond.service
+# screen-off races with this restore service and can lose, lighting the screen at boot
+sudo chroot rootfs systemctl mask systemd-backlight@backlight:backlight.service
+# the Bluetooth name
+sudo sed -i -E '0,/^#?Name *=.*/s//Name = Lemonade Mirror/' rootfs/etc/bluetooth/main.conf
 ```
 Add the extracted vendor firmware blobs ([step 5](05-extract-vendor-blobs.md)) under
 `rootfs/lib/firmware/`. Optionally install OpenCV for gesture/ML work (a headless pip venv keeps it

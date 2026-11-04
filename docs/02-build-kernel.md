@@ -16,9 +16,9 @@ git clone --depth 1 -b v6.18.60 \
 cd linux
 git am /path/to/lemonademirror/kernel/patches/*.patch
 ```
-The six patches: `0001` display bridge override, `0002` console rotation config, `0003`+`0004` audio
+The seven patches: `0001` display bridge override, `0002` console rotation config, `0003`+`0004` audio
 (SAI clocks, amp driver, mic MCLK), `0005` camera cached buffers + CMA node, `0006` reserved-memory
-`ranges;` + camera memory cap. They also add the device tree
+`ranges;` + camera memory cap, `0007` Bluetooth fixes + bottom button (polling `snvs_pwrkey`). They also add the device tree
 `arch/arm64/boot/dts/freescale/imx8mm-mirror.dts` (a copy is in [`kernel/`](../kernel/imx8mm-mirror.dts)
 for reference).
 

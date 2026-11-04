@@ -1,0 +1,137 @@
+#!/usr/bin/python3
+"""Open a short Bluetooth pairing window for one device, then close it again.
+
+The mirror is normally not discoverable and not pairable. An app runs this tool
+when the user asks to pair, shows the passkey on screen, and waits for the result.
+
+Prints one event per line:
+  ready                  window open, the mirror is visible as a Bluetooth device
+  passkey 123456         show this; the user checks it matches their device
+  paired AA:BB:... Name  that device is now the only trusted device
+  timeout                nobody paired in time
+
+Exit status: 0 paired, 1 timeout or error. SIGTERM cancels. The window is always
+closed on exit. Usage: mirror-bt-pair [window_seconds]   (default 120)
+"""
+import os
+import pty
+import re
+import select
+import signal
+import subprocess
+import sys
+import time
+
+ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x01|\x02")
+DEVICE = re.compile(r"\[CHG\] Device ([0-9A-F:]{17}) (?:Paired|Bonded): yes")
+PASSKEY = re.compile(r"Confirm passkey (\d+)")
+
+
+def ctl(*args):
+    done = subprocess.run(["bluetoothctl", *args], capture_output=True, text=True, timeout=15)
+    return ANSI.sub("", done.stdout)
+
+
+def emit(line):
+    print(line, flush=True)
+
+
+def devices(kind):
+    return re.findall(r"Device ([0-9A-F:]{17})", ctl("devices", kind))
+
+
+def close_window():
+    for _ in range(5):
+        ctl("discoverable", "off")
+        ctl("pairable", "off")
+        show = ctl("show")
+        if "Discoverable: no" in show and "Pairable: no" in show:
+            return True
+        time.sleep(0.5)
+    return False
+
+
+def make_only_active(mac):
+    ctl("trust", mac)
+    for other in devices("Paired"):
+        if other != mac:
+            ctl("untrust", other)
+    for other in devices("Connected"):
+        if other != mac:
+            ctl("disconnect", other)
+
+
+def name_of(mac):
+    found = re.search(r"Name: (.*)", ctl("info", mac))
+    return found.group(1).strip() if found else ""
+
+
+def wait_for(fd, text, seconds):
+    deadline, seen = time.time() + seconds, ""
+    while time.time() < deadline:
+        if select.select([fd], [], [], 0.2)[0]:
+            seen += ANSI.sub("", os.read(fd, 4096).decode(errors="replace"))
+            if text in seen:
+                return True
+    return False
+
+
+def pair(fd, window):
+    deadline, buf = time.time() + window, ""
+    while time.time() < deadline:
+        if not select.select([fd], [], [], 0.2)[0]:
+            continue
+        buf += ANSI.sub("", os.read(fd, 4096).decode(errors="replace"))
+        while "\n" in buf or "(yes/no)" in buf:
+            cut = buf.find("(yes/no)")
+            if cut >= 0 and ("\n" not in buf or cut < buf.find("\n")):
+                line, buf = buf[:cut], buf[cut + len("(yes/no)"):]
+                key = PASSKEY.search(line)
+                if key:
+                    emit("passkey " + key.group(1))
+                os.write(fd, b"yes\n")
+                continue
+            line, buf = buf.split("\n", 1)
+            device = DEVICE.search(line)
+            if device:
+                return device.group(1)
+    return None
+
+
+def main():
+    window = int(sys.argv[1]) if len(sys.argv) > 1 else 120
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(1))
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.execvp("bluetoothctl", ["bluetoothctl"])
+    try:
+        os.write(fd, b"agent on\n")
+        if not wait_for(fd, "Agent registered", 5):
+            emit("error agent")
+            return 1
+        os.write(fd, b"default-agent\n")
+        if not wait_for(fd, "Default agent request successful", 5):
+            emit("error agent")
+            return 1
+        ctl("pairable", "on")
+        ctl("discoverable-timeout", str(window))
+        ctl("discoverable", "on")
+        emit("ready")
+        mac = pair(fd, window)
+        if not mac:
+            emit("timeout")
+            return 1
+        close_window()
+        make_only_active(mac)
+        emit("paired %s %s" % (mac, name_of(mac)))
+        return 0
+    finally:
+        closed = close_window()
+        os.kill(pid, signal.SIGTERM)
+        os.close(fd)
+        if not closed:
+            print("error window still open", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

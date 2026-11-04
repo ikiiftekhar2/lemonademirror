@@ -241,14 +241,16 @@
 	/* D7 fix (vendor dtbo serial@30860000): re-parent UART1 root clock to
 	 * SYS_PLL1_80M (imx8mm-clock.h id 49; default OSC_24M parent cannot
 	 * cleanly divide to 3 Mbaud for the BCM4345C0). */
-	assigned-clocks = <&clk IMX8MM_CLK_UART1_ROOT>;
+	assigned-clocks = <&clk IMX8MM_CLK_UART1>;	/* the mux; _ROOT is only a gate */
 	assigned-clock-parents = <&clk IMX8MM_SYS_PLL1_80M>;
 
 	bluetooth {
 		/* CYW43455 = BCM4345C0 chip (B3 patchram
 		 * BCM4345C0_003.001.025.0172.0000_Murata_1MW_Arrow.hcd) */
 		compatible = "brcm,bcm43438-bt";
-		shutdown-gpios = <&gpio2 6 GPIO_ACTIVE_LOW>;
+		/* BT_REG_ON: high = chip on. hci_bcm drives logical 1 to power on; the
+		 * vendor rfkill driver ignored the DT's active-low flag and drove it raw. */
+		shutdown-gpios = <&gpio2 6 GPIO_ACTIVE_HIGH>;
 		max-speed = <3000000>;
 		/* BORROWED (brcm,bcm43438-bt generic + max-speed) — VERIFY AT FIRST BOOT;
 		 * hci_bcm loads the .hcd via /lib/firmware/brcm/BCM4345C0.hcd naming */
@@ -951,6 +953,17 @@
 			MX8MM_IOMUXC_GPIO1_IO09_GPIO1_IO9		0x19
 		>;
 	};
+};
+
+/* D8: bottom button = SNVS ONOFF pad (owner press test 2026-11-04). Generic key,
+ * so nothing on the system reacts to it by default; apps use mirror-buttond.
+ * The driver polls the button level (patched snvs_pwrkey): the secure firmware
+ * blocks the SNVS LP register writes its interrupt needs. That also makes
+ * power-off-time-sec a no-op here: LPCR.BPT stays at its reset value. */
+&snvs_pwrkey {
+	linux,keycode = <KEY_PROG1>;
+	power-off-time-sec = <0>;
+	status = "okay";
 };
 
 &wdog1 {

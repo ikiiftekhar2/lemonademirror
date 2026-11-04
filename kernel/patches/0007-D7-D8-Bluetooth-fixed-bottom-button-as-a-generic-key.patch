@@ -1,0 +1,140 @@
+From 3eeb85b1b786c7e5e574a96fd8722993241c7cc1 Mon Sep 17 00:00:00 2001
+From: Iftekhar Khaled <samintisardev@gmail.com>
+Date: Wed, 4 Nov 2026 15:39:26 +0000
+Subject: [PATCH] D7/D8: Bluetooth fixed, bottom button as a generic key
+
+Bluetooth (D7):
+- shutdown-gpios is GPIO_ACTIVE_HIGH: hci_bcm drives logical 1 to power on,
+  while the vendor rfkill driver ignored the DT's active-low flag and drove
+  the line raw. The old flag held the chip in shutdown.
+- assigned-clocks targets the IMX8MM_CLK_UART1 mux, not the _ROOT gate, so
+  UART1 really runs from SYS_PLL1_80M and can reach 3 Mbaud.
+
+Button (D8):
+- The bottom button is the SNVS ONOFF pad, not the gpio-keys line. Enable
+  snvs_pwrkey as KEY_PROG1 so nothing reacts to it by default.
+- Poll HPSR.BTN (poll_ms, default 40). The secure firmware blocks non-secure
+  writes to the SNVS LP registers (HPCOMR.NPSWA_EN = 0; the vendor kernel
+  clears LPSR.SPO through a Trusty call), so the interrupt could never be
+  acknowledged. For the same reason power-off-time-sec has no effect here.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../boot/dts/freescale/imx8mm-mirror.dts      | 17 ++++++++-
+ drivers/input/keyboard/snvs_pwrkey.c          | 37 ++++++++++++++-----
+ 2 files changed, 43 insertions(+), 11 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/freescale/imx8mm-mirror.dts b/arch/arm64/boot/dts/freescale/imx8mm-mirror.dts
+index 704b4ca94..7418f746d 100644
+--- a/arch/arm64/boot/dts/freescale/imx8mm-mirror.dts
++++ b/arch/arm64/boot/dts/freescale/imx8mm-mirror.dts
+@@ -241,14 +241,16 @@ &uart1 {
+ 	/* D7 fix (vendor dtbo serial@30860000): re-parent UART1 root clock to
+ 	 * SYS_PLL1_80M (imx8mm-clock.h id 49; default OSC_24M parent cannot
+ 	 * cleanly divide to 3 Mbaud for the BCM4345C0). */
+-	assigned-clocks = <&clk IMX8MM_CLK_UART1_ROOT>;
++	assigned-clocks = <&clk IMX8MM_CLK_UART1>;	/* the mux; _ROOT is only a gate */
+ 	assigned-clock-parents = <&clk IMX8MM_SYS_PLL1_80M>;
+ 
+ 	bluetooth {
+ 		/* CYW43455 = BCM4345C0 chip (B3 patchram
+ 		 * BCM4345C0_003.001.025.0172.0000_Murata_1MW_Arrow.hcd) */
+ 		compatible = "brcm,bcm43438-bt";
+-		shutdown-gpios = <&gpio2 6 GPIO_ACTIVE_LOW>;
++		/* BT_REG_ON: high = chip on. hci_bcm drives logical 1 to power on; the
++		 * vendor rfkill driver ignored the DT's active-low flag and drove it raw. */
++		shutdown-gpios = <&gpio2 6 GPIO_ACTIVE_HIGH>;
+ 		max-speed = <3000000>;
+ 		/* BORROWED (brcm,bcm43438-bt generic + max-speed) — VERIFY AT FIRST BOOT;
+ 		 * hci_bcm loads the .hcd via /lib/firmware/brcm/BCM4345C0.hcd naming */
+@@ -953,6 +955,17 @@ MX8MM_IOMUXC_GPIO1_IO09_GPIO1_IO9		0x19
+ 	};
+ };
+ 
++/* D8: bottom button = SNVS ONOFF pad (owner press test 2026-11-04). Generic key,
++ * so nothing on the system reacts to it by default; apps use mirror-buttond.
++ * The driver polls the button level (patched snvs_pwrkey): the secure firmware
++ * blocks the SNVS LP register writes its interrupt needs. That also makes
++ * power-off-time-sec a no-op here: LPCR.BPT stays at its reset value. */
++&snvs_pwrkey {
++	linux,keycode = <KEY_PROG1>;
++	power-off-time-sec = <0>;
++	status = "okay";
++};
++
+ &wdog1 {
+ 	pinctrl-names = "default";
+ 	pinctrl-0 = <&pinctrl_wdog>;
+diff --git a/drivers/input/keyboard/snvs_pwrkey.c b/drivers/input/keyboard/snvs_pwrkey.c
+index 954055aaf..94c1beefd 100644
+--- a/drivers/input/keyboard/snvs_pwrkey.c
++++ b/drivers/input/keyboard/snvs_pwrkey.c
+@@ -33,6 +33,16 @@
+ #define DEBOUNCE_TIME		30
+ #define REPEAT_INTERVAL		60
+ 
++/*
++ * Mirror: the secure firmware blocks non-secure writes to the SNVS LP registers
++ * (HPCOMR.NPSWA_EN = 0; vendor Android clears LPSR.SPO through a Trusty call). The
++ * interrupt could never be acknowledged here, so read the button level instead.
++ * HPSR.BTN is readable from Linux. poll_ms = 0 selects the upstream interrupt path.
++ */
++static unsigned int poll_ms = 40;
++module_param(poll_ms, uint, 0444);
++MODULE_PARM_DESC(poll_ms, "Button poll period in ms (0: use the interrupt)");
++
+ struct pwrkey_drv_data {
+ 	struct regmap *snvs;
+ 	int irq;
+@@ -62,10 +72,10 @@ static void imx_imx_snvs_check_for_events(struct timer_list *t)
+ 		pm_relax(pdata->input->dev.parent);
+ 	}
+ 
+-	/* repeat check if pressed long */
+-	if (state) {
++	/* repeat check if pressed long, or always when polling */
++	if (state || poll_ms) {
+ 		mod_timer(&pdata->check_timer,
+-			  jiffies + msecs_to_jiffies(REPEAT_INTERVAL));
++			  jiffies + msecs_to_jiffies(poll_ms ?: REPEAT_INTERVAL));
+ 	}
+ }
+ 
+@@ -206,12 +216,14 @@ static int imx_snvs_pwrkey_probe(struct platform_device *pdev)
+ 	pdata->input = input;
+ 	platform_set_drvdata(pdev, pdata);
+ 
+-	error = devm_request_irq(&pdev->dev, pdata->irq,
+-			       imx_snvs_pwrkey_interrupt,
+-			       0, pdev->name, pdev);
+-	if (error) {
+-		dev_err(&pdev->dev, "interrupt not available.\n");
+-		return error;
++	if (!poll_ms) {
++		error = devm_request_irq(&pdev->dev, pdata->irq,
++				       imx_snvs_pwrkey_interrupt,
++				       0, pdev->name, pdev);
++		if (error) {
++			dev_err(&pdev->dev, "interrupt not available.\n");
++			return error;
++		}
+ 	}
+ 
+ 	error = input_register_device(input);
+@@ -220,6 +232,13 @@ static int imx_snvs_pwrkey_probe(struct platform_device *pdev)
+ 		return error;
+ 	}
+ 
++	if (poll_ms) {
++		dev_info(&pdev->dev, "polling button every %u ms\n", poll_ms);
++		mod_timer(&pdata->check_timer,
++			  jiffies + msecs_to_jiffies(poll_ms));
++		return 0;
++	}
++
+ 	device_init_wakeup(&pdev->dev, pdata->wakeup);
+ 	error = dev_pm_set_wake_irq(&pdev->dev, pdata->irq);
+ 	if (error)
+-- 
+2.43.0
+

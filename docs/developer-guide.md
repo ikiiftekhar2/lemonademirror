@@ -1,6 +1,6 @@
 # Developer guide: building apps on the mirror
 
-Once the system is up, the speakers, mic, camera and display are standard Linux interfaces. This is
+Once the system is up, the speakers, mic, camera, display, button and Bluetooth are easy to reach from an app. This is
 how to use them, with the quirks that matter. Hardware details are in
 [hardware-reference.md](hardware-reference.md).
 
@@ -78,6 +78,51 @@ exposure on the `ov5640` sub-device for crisp fast motion.
   [N]` / `screenoff`. Independent of the display driver — draw first, then light up.
 - GPU is **OpenGL ES 2.0 only** (Vivante GC600). Request GLES2 explicitly in any toolkit. Scan-out
   buffers must be **XRGB (no alpha)**.
+
+## Bottom button
+A generic input: nothing on the system reacts to it by default. Read one event per line from a socket:
+```python
+import socket
+s = socket.socket(socket.AF_UNIX)
+s.connect("/run/mirror-button/events.sock")
+for line in s.makefile():
+    print(line.strip())
+```
+| Event | When | |
+|---|---|---|
+| `press`, `release` | immediately | instant feedback |
+| `tap` | **0.75 s after release** (ruling out a double) | main action |
+| `double` | on the second release | second action |
+| `hold` | **2 s into the press**, still held | deliberate action |
+
+- **Don't hold for 5 s or more.** The hardware has its own hold-to-power-off that Linux can't change (the time is the
+  reset default, not tested).
+- Up to 16 clients; run as root or in group `input`. Tune with `-d` (double window) and `-H` (hold) in
+  `mirror-buttond.service`. Raw input: `/dev/input/by-path/platform-30370000.snvs:snvs-powerkey-event`, `KEY_PROG1`.
+- It can't wake the board from suspend, because the driver polls ([why](drivers/D1-D2-D7-D8-D9-misc.md#d8--bottom-button-)).
+
+## Bluetooth
+The mirror is **not discoverable and not pairable** by default. Pairing only happens when an app asks:
+
+1. **Your app opens a window** when the user asks to pair: `mirror-bt-pair [seconds]` (default 120, run as root).
+2. **The user picks "Lemonade Mirror"** in their device's Bluetooth settings and taps Pair.
+3. **Your app shows the passkey** so the user can check it matches. The mirror's side accepts it automatically.
+4. **The window closes itself.** The new device is trusted; other paired devices are disconnected and lose their trust.
+
+The tool prints events and exits 0 when paired, 1 otherwise. `SIGTERM` cancels.
+```python
+import subprocess
+p = subprocess.Popen(["mirror-bt-pair", "120"], stdout=subprocess.PIPE, text=True)
+for line in p.stdout:
+    kind, _, value = line.strip().partition(" ")
+    # kind: ready | passkey (value = code to show) | paired (value = MAC + name) | timeout
+ok = p.wait() == 0
+```
+- **Not set up yet:** the mirror offers no profiles, so it isn't a speaker or headset. Phones connect but have nothing to
+  use until an app adds a service (BlueZ D-Bus, or BLE GATT for a companion app), and may drop an idle link.
+- **Wi-Fi shares the radio:** pings got noticeably worse during a scan in one short test, with no loss. Avoid long scans
+  during network-sensitive work.
+- **Not tested:** reconnecting after a toggle or reboot, and refusing a second, untrusted device.
 
 ## Suggested architecture for a gesture-driven mirror UI
 The device is well-suited to: UI screens on the panel + a camera model that detects gestures/presence

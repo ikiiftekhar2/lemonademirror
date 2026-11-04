@@ -6,12 +6,16 @@ revision. Verify with `sha256sum -c SHA256SUMS`.
 | File | What |
 |---|---|
 | `Image` | mainline 6.18.60 kernel with the LemonadeMirror patches, `vermagic` **`6.18.60-dirty`** |
-| `imx8mm-mirror.dtb` | the device tree (display override, audio clocks, mic MCLK, CMA, etc.) |
+| `imx8mm-mirror.dtb` | the device tree (display override, audio clocks, mic MCLK, CMA, Bluetooth, bottom button, etc.) |
 | `modules-6.18.60-dirty.tar.gz` | matching module tree — untar into your rootfs: `tar xzf … -C <rootfs>/lib/modules/` |
 | `v4l2loopback.ko` | patched multi-reader v4l2loopback (also inside the modules tarball) |
 
 **Use `Image` and the modules as a set** — the module `vermagic` must match the kernel, or modules
 won't load.
+
+⚠️ **Use `imx8mm-mirror.dtb` and the modules as a set too.** This DTB enables the bottom button, which needs the patched
+`snvs_pwrkey.ko` in this tarball. With an unpatched module, a press could lock up the board
+([why](../docs/drivers/D1-D2-D7-D8-D9-misc.md#d8--bottom-button-)).
 
 **Still required separately** (not here, by design):
 - the vendor firmware blobs — extract from your own backup ([docs/05-extract-vendor-blobs.md](../docs/05-extract-vendor-blobs.md));

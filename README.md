@@ -46,8 +46,8 @@ in progress. Each links to a full write-up (symptom → root cause → fix → h
 | D4 | Speakers (2× TAS5806) | ✅ working | vendor DSP program + driver fixes; "distortion" was just the mixer at +48 dB | [D4-speakers](docs/drivers/D4-speakers.md) |
 | D5 | Microphone (SAI5 I²S) | ✅ working | one device-tree property (`fsl,sai-mclk-direction-output`) | [D5-mic](docs/drivers/D5-mic.md) |
 | D6 | WiFi (BCM4345/6) | ✅ working | SDIO pinctrl + regulator voltage fixes; autoconnects at boot | [D6-wifi](docs/drivers/D6-wifi.md) |
-| D7 | Bluetooth (BCM4345/6) | 🔴 **not working** | chip never answers on UART1; root-caused, needs more work | [misc](docs/drivers/D1-D2-D7-D8-D9-misc.md) |
-| D8 | Front button | 🟡 detected, unconfirmed | shows up as `KEY_F10`; a real press hasn't been captured yet | [misc](docs/drivers/D1-D2-D7-D8-D9-misc.md) |
+| D7 | Bluetooth (BCM4345C0) | ✅ working | scans and pairs (iPhone tested); hidden until an app opens a pairing window | [misc](docs/drivers/D1-D2-D7-D8-D9-misc.md#d7--bluetooth-) |
+| D8 | Bottom button | ✅ working | generic `tap`/`double`/`hold` events for apps | [misc](docs/drivers/D1-D2-D7-D8-D9-misc.md#d8--bottom-button-) |
 | D9 | Touch | ✅ n/a | there is **no** touch panel (confirmed by I²C scan) | [misc](docs/drivers/D1-D2-D7-D8-D9-misc.md) |
 | D10 | Camera (OV5640) | ✅ working | format-chain fix + a **camera hub** so many apps/ML models share it at 1080p30 | [D10-camera](docs/drivers/D10-camera.md) |
 
@@ -56,8 +56,7 @@ time/NTP, and a fully unattended cold boot (WiFi up + SSH reachable ~30–60 s a
 keyboard).
 
 **Known rough edges / open issues:**
-- 🔴 **Bluetooth** — the controller doesn't initialise. [tracked here](docs/drivers/D1-D2-D7-D8-D9-misc.md#d7-bluetooth).
-- 🟡 **Button** — enumerates but a press hasn't been logged; needs a quick confirm.
+- 🟡 **Bluetooth** — works, but offers no profiles yet (not a speaker or headset); reconnect not tested.
 - 🟡 **Harmless `caam_probe` kernel oops** on every boot (the crypto block is owned by the secure
   firmware); system runs fine. Blacklisting the `caam` module silences it.
 - 🟡 **`reboot` over SSH hangs** — use `poweroff` then power-cycle. Cause not yet pinned down.
@@ -169,7 +168,7 @@ docs/          the full walkthrough + per-driver deep-dives + developer guide
 | Audio in | I²S MEMS mic(s) on SAI5 |
 | Camera | OmniVision OV5640, 5 MP, wide-angle, MIPI CSI-2 |
 | Wireless | Broadcom/Cypress BCM4345/6 (WiFi SDIO + BT UART) |
-| Input | one front button; **no touch screen** |
+| Input | one bottom button; **no touch screen** |
 
 ## Credits & license
 
@@ -181,4 +180,4 @@ docs/          the full walkthrough + per-driver deep-dives + developer guide
 - Not affiliated with, or endorsed by, lululemon or NXP. "Mirror" and "lululemon" are trademarks of
   their owners; used here only to describe the hardware this project runs on.
 
-*Contributions welcome — especially Bluetooth (D7) and smooth video output.*
+*Contributions welcome — especially Bluetooth profiles and smooth video output.*

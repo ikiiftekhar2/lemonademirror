@@ -1,0 +1,18 @@
+[Unit]
+Description=Mirror bottom button events (tap, double, hold)
+
+[Service]
+ExecStart=/usr/local/sbin/mirror-buttond -d 750
+User=nobody
+Group=input
+RuntimeDirectory=mirror-button
+RuntimeDirectoryMode=0755
+Restart=always
+RestartSec=2
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
