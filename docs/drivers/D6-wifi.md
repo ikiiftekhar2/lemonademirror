@@ -40,5 +40,5 @@ Once root has a writable filesystem you can also just:
 ```sh
 nmcli dev wifi connect "YOUR_SSID" password "YOUR_PASSWORD"
 ```
-The address is DHCP (no static IP), and there's no mDNS, so find the mirror by its DHCP lease / your
-router.
+The address is DHCP (no static IP), so find the mirror by its DHCP lease / your router, or
+[set up `mirror.local`](../developer-guide.md#platform-behaviour) (mDNS isn't installed by default).

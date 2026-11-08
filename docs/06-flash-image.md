@@ -174,6 +174,7 @@ Now see the [developer guide](developer-guide.md) to start building on it.
 
 | To do this | Run or do this |
 |---|---|
+| Reach it as `mirror.local` | Not set up in the image. [Install it once](developer-guide.md#platform-behaviour) |
 | Reboot | `sudo reboot`. Back on SSH in about 40 s |
 | Turn off | `sudo shutdown now`. Only wall power turns it back on |
 | Screen on / off | `screenon 80` / `screenoff`. It always boots dark |

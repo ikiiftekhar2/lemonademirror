@@ -146,8 +146,18 @@ speakers/mic via ALSA default (chimes, TTS, voice)
 ## Platform behaviour
 - **Boot:** fully unattended from power — kernel + userspace reach `graphical.target` in ~8–9 s; WiFi
   up and SSH reachable ~30–60 s after power-on. Boots with the screen dark.
-- **Network:** NetworkManager autoconnects WiFi (DHCP, no static IP, no mDNS — find it via your
-  router). SSH: log in as a non-root sudo user with an SSH key (see docs/03); `scp -O` (no sftp subsystem).
+- **Network:** NetworkManager autoconnects WiFi (DHCP, no static IP — find it via your router, or set up
+  `mirror.local` below). SSH: log in as a non-root sudo user with an SSH key (see docs/03); `scp -O` (no sftp subsystem).
+- **`mirror.local` (optional):** the image and the docs/03 rootfs don't include mDNS, so install it once on the board:
+  ```sh
+  sudo apt-get install -y --no-install-recommends avahi-daemon
+  sudo sed -i -e 's/^#\?allow-interfaces=.*/allow-interfaces=wlan0/' \
+    -e 's/^#\?enable-wide-area=.*/enable-wide-area=no/' /etc/avahi/avahi-daemon.conf
+  sudo systemctl enable avahi-daemon
+  sudo systemctl restart avahi-daemon
+  ```
+  Then `ssh <user>@<hostname>.local` works from other devices with mDNS, and keeps working if the IP changes. It uses about
+  3 MB of RAM and advertises no services. On the reference unit the name resolves and SSH's port connects from a Mac (not yet tested after a reboot).
 - **Services at boot:** `screen-off` (backlight 0), `camhub` (camera), `mirror-buttond` (button events), BlueZ (hidden until an
   app pairs), ALSA restore, timesyncd (NTP; no RTC, so the clock is wrong until it syncs), NetworkManager, ssh.
 - **Time:** wait for `timedatectl show -p NTPSynchronized --value` = `yes` before trusting timestamps.
