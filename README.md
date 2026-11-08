@@ -128,7 +128,17 @@ Then flash per [docs/04](docs/04-flash-and-persist.md). Verify the binaries firs
 
 Don't want to put a Debian system together yourself? There's also a ready-made Debian image with this kernel and all its services set up. Once you have a U-Boot prompt and a backup, one script burns it and asks for your Wi-Fi details. **[Flash guide](docs/06-flash-image.md)**.
 
-It passed a full emulator run with a real U-Boot, but hasn't been burned on real hardware yet ([what's been tested](docs/06-flash-image.md#what-has-been-tested)).
+✅ **It works on real hardware.** A second Mirror V1.1, flashed from macOS with this script, booted and passed all 20 hardware checks, and its picture, speakers and mic checked out by eye and ear ([what's been tested](docs/06-flash-image.md#what-has-been-tested)).
+
+The whole install, in short. Each step is spelled out in the [flash guide](docs/06-flash-image.md):
+
+1. Get a `u-boot=>` prompt over the UART ([gouda-percha's guide](https://failedattempts.neocities.org/)), and optionally run `uart-check.py`.
+2. Run `ums 0 mmc 2` and back up the whole eMMC with `dd`. This is your only way back to Android.
+3. Download the image files from the [latest release](https://github.com/ikiiftekhar2/lemonademirror/releases/latest) and check `SHA256SUMS`.
+4. Run `sudo ./flash-mirror.sh <disk>`. It checks the disk, asks for your Wi-Fi and login, then writes and verifies.
+5. Set the new `bootcmd` in U-Boot and `saveenv`.
+6. Power-cycle. First boot takes a few minutes with the screen dark.
+7. Run `ssh mirror@mirror`, then `sudo mirror-hwcheck`, and look at the test card.
 
 ---
 

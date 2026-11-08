@@ -4,7 +4,7 @@ An optional shortcut. The main thing this project offers is [the kernel package]
 
 **This guide starts once you can reach the `u-boot=>` prompt.** To get there on a locked unit, follow **[gouda-percha's guide](https://failedattempts.neocities.org/)**. None of this project would be possible without that work, so a huge thank you to gouda-percha for figuring it out and sharing it. There's more detail in [Get a U-Boot prompt](01-get-uboot.md).
 
-> ⚠️ **Testing status:** the image passed a full run in an emulator (real U-Boot, real kernel, the reference unit's real partitions and firmware), and its files match a working mirror. **It hasn't been burned on real hardware yet.** See [What has been tested](#what-has-been-tested). Do step 2 first, and please [report how it goes](https://github.com/ikiiftekhar2/lemonademirror/issues).
+> ✅ **Tested on real hardware:** on 7 November 2026 the flash tool burned this image onto a second Mirror V1.1 (not the reference unit) from macOS. It booted, passed `mirror-hwcheck` 20 of 20, and the picture, speakers and mic checked out by eye and ear. See [What has been tested](#what-has-been-tested). That's one real burn so far, so still do step 2 first, and please [report how it goes](https://github.com/ikiiftekhar2/lemonademirror/issues).
 
 ## Before you start
 
@@ -150,16 +150,23 @@ ssh mirror@mirror               # or: ssh mirror@<IP from your router>
 sudo mirror-hwcheck
 ```
 
-`mirror-hwcheck` checks the display link, camera, audio devices, firmware, Wi-Fi, Bluetooth, button and reboot fix. Then check what it can't judge:
+`mirror-hwcheck` checks the display link, camera, audio devices, firmware, Wi-Fi, Bluetooth, button and reboot fix. It should say 20 of 20. If only the camera fails on the very first boot, cut the power, plug it back in and run it again; that happened once on real hardware and the power cycle cleared it.
+
+Then check what it can't judge:
 
 ```sh
 screenon 80                                                 # light the screen
+echo 0 | sudo tee /sys/class/graphics/fbcon/cursor_blink    # hide the console cursor
 cat /usr/local/share/mirror/testcard.bgra | sudo tee /dev/fb0 >/dev/null   # test card
 speaker-test -D default -c 2 -t wav -l 1                    # sound
+arecord -D default -d 5 -f S16_LE -r 48000 -c 2 /tmp/mic.wav && aplay -D default /tmp/mic.wav   # mic: talk for 5 s
 screenoff                                                   # back to dark
+echo 1 | sudo tee /sys/class/graphics/fbcon/cursor_blink    # cursor back on
 ```
 
-The test card should be upright with correct colours. Keep your content at least 20 px from every edge, as the bezel hides the outermost pixels.
+The test card should be upright, with the red, green, blue and white squares in the right colours. The red frames at 0 and 10 px sit under the bezel, so it's normal not to see them. Keep your content at least 20 px (the yellow frame) from every edge.
+
+If you skip the `cursor_blink` line, a blinking cursor shows near the top of the test card. That's the text console, which shares the screen; it's harmless.
 
 Now see the [developer guide](developer-guide.md) to start building on it.
 
@@ -245,11 +252,16 @@ ROM → SPL → ATF → stock U-Boot → boot.scr → Linux → Debian
 | `mirror-hwcheck` on a real mirror | ✅ 20 of 20 |
 | Kernel, DTB, drivers, tools and configs in the image, compared with a working mirror | ✅ 21 of 21 match |
 | Flash tool on macOS and Linux against a disk file or loop device, including refusing four kinds of bad disk | ✅ |
+| **Real hardware:** `uart-check.py` on a second Mirror V1.1 | ✅ 9 of 9, same as the reference unit |
+| **Real hardware:** flash tool on macOS against that unit's real `ums` disk, write and read-back verify | ✅ |
+| **Real hardware:** first boot on that unit: firmware from its own Android partitions, Wi-Fi, login, SSH | ✅ |
+| **Real hardware:** `mirror-hwcheck` on that unit | ✅ 20 of 20 after a power cycle. On the very first boot the camera gave no frames; everything else passed |
+| **Real hardware:** test card on the glass, left and right speakers, both mics, on that unit | ✅ by eye and ear |
 
 **Not tested yet:**
-- A burn on real hardware. The emulator has no i.MX8, so it used an adjusted `boot.scr` for its virtual disk and device tree, and none of the real display, audio or camera drivers ran from this image.
-- The flash tool on a real `ums` disk, on either OS.
-- Units other than the reference one.
+- The flash tool on a real `ums` disk on Linux. The real burn was from macOS.
+- More units. One second unit has been burned so far.
+- Button presses and phone pairing on the second unit. `mirror-hwcheck` saw the button driver and its events, but nobody has pressed it there yet.
 - Restoring the backup after flashing.
 
 If you try it, please [tell us how it went](https://github.com/ikiiftekhar2/lemonademirror/issues), even if it just worked.
