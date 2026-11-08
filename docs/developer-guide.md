@@ -105,7 +105,8 @@ for line in s.makefile():
 The mirror is **not discoverable and not pairable** by default. Pairing only happens when an app asks:
 
 1. **Your app opens a window** when the user asks to pair: `mirror-bt-pair [seconds]` (default 120, run as root).
-2. **The user picks "Lemonade Mirror"** in their device's Bluetooth settings and taps Pair.
+2. **The user picks the mirror's hostname** (`mirror` by default) in their device's Bluetooth settings and taps Pair. BlueZ
+   advertises the hostname, not the `Name` set in `/etc/bluetooth/main.conf`. Tested with an iPhone.
 3. **Your app shows the passkey** so the user can check it matches. The mirror's side accepts it automatically.
 4. **The window closes itself.** The new device is trusted; other paired devices are disconnected and lose their trust.
 

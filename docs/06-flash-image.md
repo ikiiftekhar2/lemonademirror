@@ -177,7 +177,7 @@ Now see the [developer guide](developer-guide.md) to start building on it.
 | Reboot | `sudo reboot`. Back on SSH in about 40 s |
 | Turn off | `sudo shutdown now`. Only wall power turns it back on |
 | Screen on / off | `screenon 80` / `screenoff`. It always boots dark |
-| Pair a phone | `sudo mirror-bt-pair`, then pick **Lemonade Mirror** on the phone. [Details](developer-guide.md#bluetooth) |
+| Pair a phone | `sudo mirror-bt-pair`, then pick your mirror's hostname (**mirror** unless you chose another) on the phone within 2 minutes. [Details](developer-guide.md#bluetooth) |
 | Use the button in an app | [Developer guide](developer-guide.md#bottom-button). It isn't a power button; just avoid holding it for 5 s or more |
 
 ## Troubleshooting
@@ -258,11 +258,13 @@ ROM → SPL → ATF → stock U-Boot → boot.scr → Linux → Debian
 | **Real hardware:** first boot on that unit: firmware from its own Android partitions, Wi-Fi, login, SSH | ✅ |
 | **Real hardware:** `mirror-hwcheck` on that unit | ✅ 20 of 20 after a power cycle. On the very first boot the camera gave no frames; everything else passed |
 | **Real hardware:** test card on the glass, left and right speakers, both mics, on that unit | ✅ by eye and ear |
+| **Real hardware:** live mirrored camera view on the glass (mpv, DRM) on that unit | ✅ by eye |
+| **Real hardware:** bottom button tap, double and hold on that unit | ✅ all three events |
+| **Real hardware:** pairing an iPhone with `mirror-bt-pair` on that unit | ✅ paired; the window closed itself afterwards |
 
 **Not tested yet:**
 - The flash tool on a real `ums` disk on Linux. The real burn was from macOS.
 - More units. One second unit has been burned so far.
-- Button presses and phone pairing on the second unit. `mirror-hwcheck` saw the button driver and its events, but nobody has pressed it there yet.
 - Restoring the backup after flashing.
 
 If you try it, please [tell us how it went](https://github.com/ikiiftekhar2/lemonademirror/issues), even if it just worked.
