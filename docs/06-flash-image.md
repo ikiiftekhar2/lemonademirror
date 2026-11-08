@@ -253,6 +253,7 @@ ROM → SPL → ATF → stock U-Boot → boot.scr → Linux → Debian
 | Kernel, DTB, drivers, tools and configs in the image, compared with a working mirror | ✅ 21 of 21 match |
 | Flash tool on macOS and Linux against a disk file or loop device, including refusing four kinds of bad disk | ✅ |
 | **Real hardware:** `uart-check.py` on a second Mirror V1.1 | ✅ 9 of 9, same as the reference unit |
+| **Real hardware:** that unit's Android device tree (`dtbo_a`), read over `ums` and decompiled | ✅ byte-identical to the reference unit's |
 | **Real hardware:** flash tool on macOS against that unit's real `ums` disk, write and read-back verify | ✅ |
 | **Real hardware:** first boot on that unit: firmware from its own Android partitions, Wi-Fi, login, SSH | ✅ |
 | **Real hardware:** `mirror-hwcheck` on that unit | ✅ 20 of 20 after a power cycle. On the very first boot the camera gave no frames; everything else passed |
